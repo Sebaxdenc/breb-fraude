@@ -1,0 +1,278 @@
+# Stack local de Bre-B (Entregable 2, fase 2). Instrucciones en README.md, sección "Levantar el stack".
+#   Perfil dev (infra/.env, por defecto):  docker compose up -d --build
+#   Perfil completo:                       docker compose --env-file completo.env up -d --build
+# Todos los puertos se publican solo en 127.0.0.1.
+name: breb
+
+x-kafka: &kafka
+  image: apache/kafka:4.3.2
+  restart: unless-stopped
+  healthcheck:
+    # El chequeo arranca una JVM: con poca memoria para no competir con el bróker dentro del límite.
+    test: ["CMD-SHELL", "KAFKA_HEAP_OPTS=-Xmx64m /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1"]
+    interval: 20s
+    timeout: 15s
+    retries: 10
+    start_period: 30s
+  deploy:
+    resources:
+      limits: {cpus: "1.0", memory: 768m}
+
+x-kafka-env: &kafka-env
+  CLUSTER_ID: ${KAFKA_CLUSTER_ID}
+  KAFKA_PROCESS_ROLES: broker,controller
+  KAFKA_CONTROLLER_QUORUM_VOTERS: ${KAFKA_VOTANTES}
+  KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+  KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+  KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNO:PLAINTEXT
+  KAFKA_LOG_DIRS: /var/lib/kafka/data
+  KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+  KAFKA_DEFAULT_REPLICATION_FACTOR: ${KAFKA_RF}
+  KAFKA_MIN_INSYNC_REPLICAS: ${KAFKA_MIN_ISR}
+  KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: ${KAFKA_RF}
+  KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: ${KAFKA_RF}
+  KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: ${KAFKA_MIN_ISR}
+  KAFKA_SHARE_COORDINATOR_STATE_TOPIC_REPLICATION_FACTOR: ${KAFKA_RF}
+  KAFKA_SHARE_COORDINATOR_STATE_TOPIC_MIN_ISR: ${KAFKA_MIN_ISR}
+  KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
+  KAFKA_HEAP_OPTS: -Xms256m -Xmx256m
+
+x-mongo: &mongo
+  image: mongo:7.0.45
+  restart: unless-stopped
+  command: ["mongod", "--replSet", "rs0", "--bind_ip_all", "--keyFile", "/llave/keyfile",
+            "--wiredTigerCacheSizeGB", "${MONGO_CACHE_GB}"]
+  depends_on:
+    mongo-llave: {condition: service_completed_successfully}
+  healthcheck:
+    test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+    interval: 15s
+    timeout: 10s
+    retries: 10
+    start_period: 20s
+  deploy:
+    resources:
+      limits: {cpus: "1.0", memory: "${MONGO_LIMITE}"}
+
+x-spark: &spark
+  image: breb-spark:local
+  build:
+    context: ..
+    dockerfile: infra/spark/Dockerfile
+  restart: unless-stopped
+  env_file: [credenciales/s3.env]
+
+x-spark-env: &spark-env
+  SPARK_DAEMON_MEMORY: 256m
+  S3_ENDPOINT: http://seaweedfs:8333
+  DYNAMODB_ENDPOINT: http://dynamodb-local:8000
+
+services:
+  # ---------------------------------------------------------------- Kafka (KRaft)
+  kafka-1:
+    <<: *kafka
+    hostname: kafka-1
+    environment:
+      <<: *kafka-env
+      KAFKA_NODE_ID: 1
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNO://:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-1:9092,EXTERNO://localhost:29092
+    ports: ["127.0.0.1:29092:29092"]
+    volumes: [kafka-1-datos:/var/lib/kafka/data]
+
+  kafka-2:
+    <<: *kafka
+    profiles: [completo]
+    hostname: kafka-2
+    environment:
+      <<: *kafka-env
+      KAFKA_NODE_ID: 2
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNO://:29093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-2:9092,EXTERNO://localhost:29093
+    ports: ["127.0.0.1:29093:29093"]
+    volumes: [kafka-2-datos:/var/lib/kafka/data]
+
+  kafka-3:
+    <<: *kafka
+    profiles: [completo]
+    hostname: kafka-3
+    environment:
+      <<: *kafka-env
+      KAFKA_NODE_ID: 3
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNO://:29094
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-3:9092,EXTERNO://localhost:29094
+    ports: ["127.0.0.1:29094:29094"]
+    volumes: [kafka-3-datos:/var/lib/kafka/data]
+
+  kafka-init:
+    image: apache/kafka:4.3.2
+    restart: "no"
+    depends_on:
+      kafka-1: {condition: service_healthy}
+      kafka-2: {condition: service_healthy, required: false}
+      kafka-3: {condition: service_healthy, required: false}
+    environment:
+      KAFKA_BOOTSTRAP: kafka-1:9092
+      KAFKA_RF: ${KAFKA_RF}
+      KAFKA_MIN_ISR: ${KAFKA_MIN_ISR}
+      KAFKA_HEAP_OPTS: -Xmx128m
+    volumes: ["./kafka/crear_topicos.sh:/scripts/crear_topicos.sh:ro"]
+    # tr quita CRLF por si el repositorio se clonó en Windows sin .gitattributes.
+    command: ["sh", "-c", "tr -d '\\r' < /scripts/crear_topicos.sh | sh"]
+
+  # ---------------------------------------------------------------- Lakehouse: S3 local y commits de Delta
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.52
+    restart: unless-stopped
+    # El entrypoint agrega -dir=/data -volume.max=0 -master.volumeSizeLimitMB=1024.
+    # AWS_ACCESS_KEY_ID y AWS_SECRET_ACCESS_KEY crean la única identidad con permisos sobre S3.
+    command: ["server", "-s3", "-s3.port=8333", "-ip=seaweedfs", "-ip.bind=0.0.0.0"]
+    env_file: [credenciales/s3.env]
+    ports: ["127.0.0.1:8333:8333"]
+    volumes: [seaweedfs-datos:/data]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8333/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    deploy:
+      resources:
+        limits: {cpus: "1.0", memory: 512m}
+
+  dynamodb-local:
+    image: amazon/dynamodb-local:3.3.2
+    restart: unless-stopped
+    # -sharedDb: una sola base para cualquier credencial y región. En memoria: si se reinicia, Delta
+    # sigue funcionando porque los commits ya escritos están en S3 (la tabla solo coordina los nuevos).
+    command: ["-Xmx256m", "-jar", "DynamoDBLocal.jar", "-sharedDb", "-inMemory"]
+    ports: ["127.0.0.1:8000:8000"]
+    deploy:
+      resources:
+        limits: {cpus: "0.5", memory: 512m}
+
+  init-recursos:
+    <<: *spark
+    restart: "no"
+    depends_on:
+      seaweedfs: {condition: service_healthy}
+      dynamodb-local: {condition: service_started}
+    environment: *spark-env
+    command: ["python", "/opt/breb/infra/init/crear_recursos.py"]
+
+  # ---------------------------------------------------------------- Spark standalone
+  spark-master:
+    <<: *spark
+    hostname: spark-master
+    environment: *spark-env
+    command: ["spark-class", "org.apache.spark.deploy.master.Master",
+              "--host", "spark-master", "--port", "7077", "--webui-port", "8080"]
+    ports: ["127.0.0.1:8080:8080"]
+    deploy:
+      resources:
+        limits: {cpus: "1.0", memory: 512m}
+
+  spark-worker-1:
+    <<: *spark
+    hostname: spark-worker-1
+    depends_on: [spark-master]
+    environment: &spark-worker-env
+      <<: *spark-env
+      SPARK_WORKER_OPTS: -Dspark.worker.cleanup.enabled=true -Dspark.worker.cleanup.appDataTtl=3600
+    command: ["spark-class", "org.apache.spark.deploy.worker.Worker", "spark://spark-master:7077",
+              "--cores", "${SPARK_WORKER_CORES}", "--memory", "${SPARK_WORKER_MEMORY}",
+              "--webui-port", "8081", "--work-dir", "/opt/spark/work"]
+    ports: ["127.0.0.1:8081:8081"]
+    deploy:
+      resources:
+        limits: {cpus: "${SPARK_WORKER_CORES}", memory: "${SPARK_WORKER_LIMITE}"}
+
+  spark-worker-2:
+    <<: *spark
+    profiles: [completo]
+    hostname: spark-worker-2
+    depends_on: [spark-master]
+    environment: *spark-worker-env
+    command: ["spark-class", "org.apache.spark.deploy.worker.Worker", "spark://spark-master:7077",
+              "--cores", "${SPARK_WORKER_CORES}", "--memory", "${SPARK_WORKER_MEMORY}",
+              "--webui-port", "8081", "--work-dir", "/opt/spark/work"]
+    ports: ["127.0.0.1:8082:8081"]
+    deploy:
+      resources:
+        limits: {cpus: "${SPARK_WORKER_CORES}", memory: "${SPARK_WORKER_LIMITE}"}
+
+  # Contenedor de herramientas: docker compose run --rm spark-cliente <comando>
+  spark-cliente:
+    <<: *spark
+    profiles: [herramientas]
+    restart: "no"
+    env_file: [credenciales/s3.env, credenciales/mongo-app.env]
+    environment:
+      <<: *spark-env
+      SPARK_MASTER_URL: spark://spark-master:7077
+      KAFKA_BOOTSTRAP: kafka-1:9092
+      MONGO_MIEMBROS: ${MONGO_MIEMBROS}
+    command: ["bash"]
+
+  # ---------------------------------------------------------------- MongoDB (replica set rs0)
+  # Genera una sola vez la llave interna del replica set en un volumen, con los permisos que exige mongod.
+  mongo-llave:
+    image: mongo:7.0.45
+    restart: "no"
+    entrypoint: ["sh", "-c"]
+    command: ["[ -s /llave/keyfile ] || head -c 756 /dev/urandom | base64 -w 0 > /llave/keyfile; chmod 400 /llave/keyfile; chown mongodb:mongodb /llave/keyfile"]
+    volumes: [mongo-llave:/llave]
+
+  mongo-1:
+    <<: *mongo
+    hostname: mongo-1
+    ports: ["127.0.0.1:27017:27017"]
+    volumes: [mongo-1-datos:/data/db, "mongo-llave:/llave:ro"]
+
+  mongo-2:
+    <<: *mongo
+    profiles: [completo]
+    hostname: mongo-2
+    volumes: [mongo-2-datos:/data/db, "mongo-llave:/llave:ro"]
+
+  mongo-3:
+    <<: *mongo
+    profiles: [completo]
+    hostname: mongo-3
+    volumes: [mongo-3-datos:/data/db, "mongo-llave:/llave:ro"]
+
+  # Comparte la red de mongo-1: por 127.0.0.1 aplica la "localhost exception" para crear el primer usuario.
+  mongo-init:
+    image: mongo:7.0.45
+    restart: "no"
+    network_mode: "service:mongo-1"
+    depends_on:
+      mongo-1: {condition: service_healthy}
+      mongo-2: {condition: service_healthy, required: false}
+      mongo-3: {condition: service_healthy, required: false}
+    env_file: [credenciales/mongo-admin.env, credenciales/mongo-app.env]
+    environment:
+      MONGO_MIEMBROS: ${MONGO_MIEMBROS}
+      HOME: /tmp
+    volumes: ["./mongo/iniciar_replica.js:/scripts/iniciar_replica.js:ro"]
+    entrypoint: ["mongosh", "--quiet", "mongodb://127.0.0.1:27017/?directConnection=true",
+                 "--file", "/scripts/iniciar_replica.js"]
+
+  # ---------------------------------------------------------------- SNS y SQS locales (fase 6)
+  moto:
+    image: motoserver/moto:5.2.5
+    restart: unless-stopped
+    ports: ["127.0.0.1:5000:5000"]
+    deploy:
+      resources:
+        limits: {cpus: "0.5", memory: 256m}
+
+volumes:
+  kafka-1-datos:
+  kafka-2-datos:
+  kafka-3-datos:
+  seaweedfs-datos:
+  mongo-llave:
+  mongo-1-datos:
+  mongo-2-datos:
+  mongo-3-datos:

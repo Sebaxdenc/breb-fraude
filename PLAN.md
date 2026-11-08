@@ -8,14 +8,14 @@ Plan para construir la arquitectura del Entregable 1 v2.0 (`documento/Entregable
 | Fase | Hito | Avance |
 |---|---|---|
 | 0. Repositorio y contratos | S13 | 8 de 10 |
-| 1. Modelo dentro del Job 2 | S13 | 9 de 10 |
-| 2. Infraestructura local | S13 | 0 de 9 |
+| 1. Modelo dentro del Job 2 | S13 | 10 de 10 |
+| 2. Infraestructura local | S13 | 9 de 13 |
 | 3. Ingesta | S13–S14 | 2 de 5 |
 | 4. Streaming | S14 | 0 de 8 |
 | 5. Batch y orquestación | S15 | 0 de 6 |
 | 6. Consumo y gobernanza | S15 | 0 de 6 |
 | 7. Pruebas y endurecimiento | S16 | 0 de 6 |
-| 8. Documento y sustentación | S16 | 0 de 5 |
+| 8. Documento y sustentación | S16 | 0 de 6 |
 
 ---
 
@@ -41,19 +41,23 @@ Plan para construir la arquitectura del Entregable 1 v2.0 (`documento/Entregable
 - [x] Notebook de verificación con datos reales para Kaggle (`herramientas/kaggle/verificar_paridad_kaggle.ipynb`)
 - [x] Notebook de demo del modelo (`herramientas/kaggle/demo_modelo_breb.ipynb`)
 - [x] Ejecutar la verificación en Kaggle con LI-Small real y obtener **PARIDAD OK**: 58 de 58 variables idénticas, diferencia de score 0 y 20.000 de 20.000 decisiones iguales ([#3](https://github.com/Sebaxdenc/breb-fraude/pull/3))
-- [ ] Registrar tiempo y RAM del estado inicial real (cuentas, pares, bancos) para dimensionar MongoDB
+- [x] Registrar tiempo y RAM del estado inicial real: 6.923.826 filas (5.884.946 de historia) cargadas en 44 s y estado de 704.707 cuentas, 1.349.332 pares y 41.815 bancos calculado en 121 s. En MongoDB ocupa unos 390 MB de BSON, hasta 655 MB cuando todos los documentos tienen `streaming_prev`. El cálculo en Python necesita unos 5,5 GB (DataFrame 3,4 GB, acumulados 0,9 GB y estado 1,2 GB): ver decisión D4
 
 ## Fase 2 · Infraestructura local (S13)
 Criterio del hito S13: `docker compose up` levanta todo con el perfil de desarrollo y el productor publica en Kafka.
-- [ ] Elegir el almacenamiento compatible con S3 que reemplaza a MinIO y validarlo con Delta Lake: escritura, MERGE, OPTIMIZE y VACUUM (riesgo R10)
-- [ ] `infra/docker-compose.yml` con perfiles `dev` y `completo`: Kafka 3.6 KRaft (1 bróker en `dev`, 3 en `completo`), almacenamiento S3, Spark 3.5 (master y 2 workers), MongoDB 7 replica set de 3, DynamoDB Local, PostgreSQL 15, Hive Metastore, Trino, Metabase, moto y Airflow 3
-- [ ] Imagen de Spark: Python 3.11, numpy 1.26.4, pandas 2.2.3, xgboost-cpu 3.2.0, delta-spark, paquete `breb` y artefactos del modelo copiados con `COPY`
-- [ ] Creación de tópicos: `breb.transacciones.raw` con 6 particiones, `replication.factor=3`, `min.insync.replicas=2`, `message.timestamp.type=LogAppendTime`, retención de 7 días
-- [ ] Inicialización del replica set de MongoDB, `electionTimeoutMillis=2000` y usuarios
-- [ ] Buckets `lakehouse-bronze`, `lakehouse-silver`, `lakehouse-gold` y tabla `delta_log` en DynamoDB Local
-- [ ] Límites de recursos por servicio y `spark.cores.max` por aplicación
+- [x] Decisión D1: SeaweedFS 4.52 (Apache 2.0) reemplaza a MinIO. `herramientas/infra/prueba_delta_s3.py` pasó con los binarios nativos: escritura, MERGE, OPTIMIZE, VACUUM y dos escritores concurrentes sin perder commits (riesgo R10)
+- [x] `S3DynamoDBLogStore` con endpoint de DynamoDB configurable, para usar DynamoDB Local: parche de 5 líneas en `infra/spark/logstore/` (riesgo R9)
+- [x] Núcleo de `infra/docker-compose.yml` con perfiles `dev` y `completo`: Kafka 4.3.2 KRaft (1 o 3 brókers), SeaweedFS, DynamoDB Local, Spark 3.5.9 (master y 1 o 2 workers), MongoDB 7.0 (replica set de 1 o 3) y moto
+- [ ] Resto del perfil `completo`: PostgreSQL 15, Hive Metastore, Trino, Metabase y Airflow 3 (fase 2b)
+- [x] Imagen de Spark (`infra/spark/Dockerfile`): Python 3.11, numpy 1.26.4, pandas 2.2.3, xgboost-cpu 3.2.0, Delta 3.3.3, JARs verificados por SHA-1, paquete `breb` y artefactos del modelo copiados con `COPY`
+- [x] Creación de tópicos (`infra/kafka/crear_topicos.sh`): `breb.transacciones.raw` con 6 particiones, `replication.factor=3`, `min.insync.replicas=2`, `message.timestamp.type=LogAppendTime` y 7 días de retención en `completo` (1 y 1 en `dev`); probado con un clúster nativo de 3 nodos
+- [x] Inicialización del replica set (`infra/mongo/iniciar_replica.js`): `electionTimeoutMillis=2000`, keyFile, usuario root y usuario `breb_app` con readWrite solo sobre `breb`; probado con 1 y 3 miembros, y es idempotente
+- [x] Buckets `lakehouse-bronze`, `lakehouse-silver`, `lakehouse-gold` y tabla `delta_log` en DynamoDB Local (`infra/init/crear_recursos.py`)
+- [x] Límites de CPU y memoria por servicio
+- [ ] `spark.cores.max` por aplicación (se fija al crear cada job, fase 4)
+- [ ] Construir la imagen y correr `verificar_stack.py` y `prueba_delta_s3.py` en Docker en el equipo de la demo, en `dev` y en `completo`
 - [ ] Medir la RAM del perfil `completo` (riesgo R5)
-- [ ] README: levantar el stack desde cero
+- [x] README: levantar el stack desde cero en Windows 11
 
 ## Fase 3 · Ingesta (S13–S14)
 - [x] Conversión de filas de IBM AML a eventos: `seq`, UUID v5, sin etiqueta (`src/breb/productor/eventos.py`)
@@ -101,6 +105,7 @@ Criterio del hito S14: un evento llega a Bronze, Silver y MongoDB; el Job 2 publ
 - [ ] Completar en el documento la tasa sostenida y el p99 medidos
 - [ ] Publicar el `.drawio` y poner su enlace en la sección 3
 - [ ] Actualizar el documento: `transaction_uuid` es UUID v5 (no v4) y resultado de la decisión D2
+- [ ] Actualizar el documento: Kafka 4.3 en lugar de 3.6, SeaweedFS en lugar de MinIO y el parche de `S3DynamoDBLogStore`
 - [ ] Guion de la demo con los pasos del diagrama
 - [ ] Ensayo de preguntas: explicar cualquier componente del diagrama
 
@@ -109,14 +114,17 @@ Criterio del hito S14: un evento llega a Bronze, Silver y MongoDB; el Job 2 publ
 ## Decisiones pendientes
 | # | Decisión | Opciones | Hito |
 |---|---|---|---|
-| D1 | Almacenamiento S3 local | Por evaluar: alternativas compatibles con la API S3 que sigan publicando imágenes. Criterio: pasa las pruebas de Delta de la fase 2 | S13 |
 | D2 | Particiones del tópico frente al orden de las variables | Con varias particiones, dos eventos muy cercanos pueden caer en micro-batches distintos y procesarse en otro orden, lo que cambia un poco los acumulados (sobre todo los de banco). Medirlo con la paridad en línea; si la diferencia afecta decisiones, usar 1 partición para la demo | S14 |
 | D3 | Tecnología de la API de ingesta | Contenedor Python mínimo. Si usan FastAPI, aclarar que su consumidor es Kafka, no el motor de autorización que se eliminó | S13 |
+| D4 | Estado inicial en el equipo de 16 GB | Calcularlo en Python pide unos 5,5 GB, que no caben junto al stack completo. Opciones: calcularlo en Kaggle y exportar los documentos (unos 390 MB sin comprimir) para que el DAG `bootstrap_state` solo los cargue; correr el DAG con el resto del stack apagado; o bajar la memoria de `cargar` y `procesar` (tipos categóricos, sin guardar las variables crudas) | S15 |
 
 ## Hallazgos que el equipo debe conocer
 - **El motor replica el notebook exactamente, incluidas sus particularidades.** `is_reciprocal_loop` vale 1 cuando el mismo par ordenante→destino ya transó antes, no cuando el destino le había enviado al ordenante: el notebook agrega y busca la clave invertida. `net_flow` combina acumulados de dos cuentas distintas. No se corrigen porque el modelo se entrenó así.
 - **Las sumas usan compensación de Kahan** porque `groupby().cumsum()` de pandas la usa. Sin ella, algunas variables cambian en el último decimal.
 - **El motor replica la aritmética de numexpr.** En Kaggle el notebook procesa unos 5 millones de filas y, con más de 1.000.000, pandas calcula con numexpr: float32 operado con un escalar da float64 y `x ** 2` usa pow() de la libm (en el 0,08 % de los montos no es igual a `x * x`). El Job 2 trabaja con lotes chicos, donde pandas usa NumPy, así que `derivar` hace esas conversiones a mano. Afecta `sender_std_amt`, `z_score_amount_sender`, `pass_through_velocity` y `passthrough_velocity_true`. Las pruebas son bit a bit y suponen Linux x86-64, como Kaggle y la imagen de Spark.
+- **`S3DynamoDBLogStore` no deja configurar el endpoint de DynamoDB** (Delta 3.3.3): siempre usa el de la región de AWS. `infra/spark/logstore/` toma la fuente oficial, le agrega la opción `ddb.endpoint` y reemplaza la clase en el JAR. En AWS se usa el JAR original, sin esa opción.
+- **Kafka 3.6 ya no tiene soporte ni imagen oficial** (`apache/kafka` empieza en 3.7). El stack usa 4.3.2; el conector de Spark 3.5 trae kafka-clients 3.4.1, que funciona con brókers 4.x.
+- **El servicio IAM del filer de SeaweedFS no tiene autenticación.** Por eso solo se publica el puerto S3 (8333), y únicamente en 127.0.0.1.
 - **El orden importa.** Las transacciones del mismo minuto se procesan en el orden del CSV (`seq`). Por eso el productor debe emitir en ese orden y el Job 2 ordena cada micro-batch por `seq`.
 
 ## Verificación rápida

@@ -18,9 +18,11 @@ Proyecto final de ST1630 Sistemas Intensivos en Datos (EAFIT, 2026-2). Implement
 | `modelo/` | Notebook de entrenamiento (versión 1 de Kaggle) y artefactos del modelo |
 | `herramientas/referencia/` | Dataset sintético y ejecución del notebook original para la prueba de paridad |
 | `herramientas/kaggle/` | Notebooks para Kaggle: verificación de paridad con datos reales y demo del modelo |
+| `infra/` | Stack local: `docker-compose.yml`, imagen de Spark, inicialización de Kafka, MongoDB, S3 y DynamoDB |
+| `herramientas/infra/` | Verificación del stack y prueba de Delta Lake sobre el S3 local |
 | `tests/` | Pruebas (paridad, Job 2 con MongoDB, contratos) |
 
-Pendiente según el plan: `infra/` (docker-compose), `jobs/` (Spark), `dags/` (Airflow), `servicios/` (API de ingesta y servicio de la entidad).
+Pendiente según el plan: `jobs/` (Spark), `dags/` (Airflow), `servicios/` (API de ingesta y servicio de la entidad).
 
 ## Entorno de desarrollo
 La versión de Python y de las librerías es la de la imagen de Spark: PySpark 3.5 admite hasta Python 3.11 y exige numpy < 2.
@@ -29,6 +31,53 @@ uv venv -p 3.11 .venv
 uv pip install -p .venv/bin/python -e ".[dev]"
 .venv/bin/python -m pytest -q
 ```
+
+## Levantar el stack
+Pensado para el equipo de la demo: Windows 11, 16 GB de RAM, Docker Desktop con WSL 2.
+
+### Preparación (una vez, con internet)
+1. Instalar Docker Desktop con el motor WSL 2.
+2. Darle memoria a WSL: crear `C:\Users\<usuario>\.wslconfig` con
+   ```ini
+   [wsl2]
+   memory=12GB
+   processors=12
+   swap=4GB
+   ```
+   y ejecutar `wsl --shutdown` en PowerShell antes de abrir Docker Desktop de nuevo.
+3. Clonar el repositorio. `.gitattributes` deja los scripts con finales de línea LF, que es lo que esperan los contenedores. Si el repositorio ya estaba clonado desde antes de este cambio, es más fácil clonarlo otra vez.
+4. Construir la imagen de Spark y descargar las demás (unos 3 GB; la de Spark tarda unos 10 minutos):
+   ```powershell
+   cd breb-fraude\infra
+   docker compose --env-file completo.env build
+   docker compose --env-file completo.env pull --ignore-buildable
+   ```
+   Después de esto, el stack arranca sin internet.
+
+### Perfiles
+| Perfil | Comando | Contenido |
+|---|---|---|
+| `dev` (por defecto, `infra/.env`) | `docker compose up -d` | 1 bróker de Kafka, MongoDB con 1 miembro, 1 worker de Spark |
+| `completo` | `docker compose --env-file completo.env up -d` | 3 brókers, replica set de 3 y 2 workers, para las pruebas de falla |
+
+Los topes de memoria de los contenedores suman 8,0 GiB en `dev` y 12,1 GiB en `completo`. Son máximos, no reservas: el consumo real hay que medirlo con `docker stats` (riesgo R5). La fase 2b agrega Airflow, Trino y Metabase, así que esa medición decide si el perfil completo cabe entero en 16 GB.
+
+En el perfil completo, **todos** los comandos de `docker compose` llevan `--env-file completo.env`. Para cambiar de perfil hay que borrar los volúmenes: el quórum de Kafka y el replica set quedan guardados en ellos.
+```powershell
+docker compose down -v
+```
+
+### Verificar
+```powershell
+docker compose ps -a                      # kafka-init, mongo-init e init-recursos terminan con "Exited (0)"
+docker compose run --rm spark-cliente python /opt/breb/herramientas/infra/verificar_stack.py   # STACK OK
+docker compose run --rm spark-cliente spark-submit /opt/breb/herramientas/infra/prueba_delta_s3.py   # PRUEBA DELTA OK
+docker stats --no-stream                  # RAM por contenedor (riesgo R5)
+```
+Interfaces: Spark en http://localhost:8080 (master) y 8081/8082 (workers). Puertos para clientes del host: Kafka `localhost:29092` (29093 y 29094 en completo), MongoDB `localhost:27017` (con `directConnection=true`), S3 `localhost:8333`, DynamoDB `localhost:8000` y moto `localhost:5000`. Todos escuchan solo en 127.0.0.1. Las credenciales de `infra/credenciales/` son solo para este entorno local.
+
+### Apagar
+`docker compose down` detiene todo y conserva los datos; `docker compose down -v` también borra los volúmenes.
 
 ## Artefactos del modelo
 `modelo/aml_xgb/` debe contener `model_meta.json` (incluido), `aml_xgb.json` y `golden_sample.parquet`, descargados de la pestaña Output de la versión 1 de [AML XGBoost Bre-B Fraud](https://www.kaggle.com/code/sebastianmedinacab/aml-xgboost-bre-b-fraud). No se usa `ohe.joblib`.
