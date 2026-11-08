@@ -3,8 +3,8 @@
   "dataset": "ealtman2019/ibm-transactions-for-anti-money-laundering-aml",
   "file": "LI-Small_Trans.csv",
   "primary_end": "2022-09-11 00:00:00",
-  "train_cutoff": "2022-09-07 23:40:00",
-  "valid_cutoff": "2022-09-09 13:00:00",
+  "train_cutoff": "2022-09-08 00:25:00",
+  "valid_cutoff": "2022-09-09 13:15:00",
   "num_features": [
     "hour",
     "day_of_week",
@@ -176,11 +176,11 @@
     "new_senders_7d_to",
     "tx_count_1h_from"
   ],
-  "best_iteration": 51,
-  "threshold": 0.12238266319036484,
-  "valid_pr_auc": 0.5268317215379288,
-  "test_pr_auc": 0.5551293501970559,
-  "test_rows": 9193,
+  "best_iteration": 53,
+  "threshold": 0.13088375329971313,
+  "valid_pr_auc": 0.5413014968517433,
+  "test_pr_auc": 0.5872971772941911,
+  "test_rows": 9204,
   "test_laundering": 41,
   "versions": {
     "xgboost": "3.2.0",
