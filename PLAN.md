@@ -8,7 +8,7 @@ Plan para construir la arquitectura del Entregable 1 v2.0 (`documento/Entregable
 | Fase | Hito | Avance |
 |---|---|---|
 | 0. Repositorio y contratos | S13 | 8 de 10 |
-| 1. Modelo dentro del Job 2 | S13 | 8 de 10 |
+| 1. Modelo dentro del Job 2 | S13 | 9 de 10 |
 | 2. Infraestructura local | S13 | 0 de 9 |
 | 3. Ingesta | S13–S14 | 2 de 5 |
 | 4. Streaming | S14 | 0 de 8 |
@@ -40,7 +40,7 @@ Plan para construir la arquitectura del Entregable 1 v2.0 (`documento/Entregable
 - [x] Cálculo del estado inicial con el mismo motor (`src/breb/estado/inicial.py`)
 - [x] Notebook de verificación con datos reales para Kaggle (`herramientas/kaggle/verificar_paridad_kaggle.ipynb`)
 - [x] Notebook de demo del modelo (`herramientas/kaggle/demo_modelo_breb.ipynb`)
-- [ ] Ejecutar la verificación en Kaggle con LI-Small real y obtener **PARIDAD OK**. Primera corrida: 54 de 58 variables idénticas, score idéntico y 20.000 de 20.000 decisiones iguales; las 4 diferencias (redondeo de numexpr) ya están corregidas y falta repetirla
+- [x] Ejecutar la verificación en Kaggle con LI-Small real y obtener **PARIDAD OK**: 58 de 58 variables idénticas, diferencia de score 0 y 20.000 de 20.000 decisiones iguales ([#3](https://github.com/Sebaxdenc/breb-fraude/pull/3))
 - [ ] Registrar tiempo y RAM del estado inicial real (cuentas, pares, bancos) para dimensionar MongoDB
 
 ## Fase 2 · Infraestructura local (S13)
