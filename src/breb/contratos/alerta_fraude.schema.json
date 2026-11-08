@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eafit.edu.co/st1630/breb/alerta_fraude/1.0",
+  "title": "Alerta de fraude (tópico SNS fraud-alerts-critical)",
+  "description": "Contrato de integración congelado. SNS entrega al menos una vez: los consumidores deben descartar los transaction_uuid ya procesados (RF15).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "transaction_uuid", "event_ts", "origen", "destino", "monto", "canal",
+               "score", "umbral", "model_version", "batch_id", "decision_ts", "contexto"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "transaction_uuid": {"type": "string"},
+    "event_ts": {"type": "string"},
+    "origen": {"$ref": "#/$defs/extremo"},
+    "destino": {"$ref": "#/$defs/extremo"},
+    "monto": {
+      "type": "object", "additionalProperties": false, "required": ["valor", "moneda"],
+      "properties": {"valor": {"type": "number"}, "moneda": {"type": "string"}}
+    },
+    "canal": {"type": "string"},
+    "score": {"type": "number", "minimum": 0, "maximum": 1},
+    "umbral": {"type": "number", "minimum": 0, "maximum": 1},
+    "model_version": {"type": "string"},
+    "batch_id": {"type": "integer"},
+    "decision_ts": {"type": "string", "format": "date-time"},
+    "contexto": {
+      "type": "object", "additionalProperties": false,
+      "required": ["transacciones_previas_del_ordenante", "destinatarios_distintos_del_ordenante",
+                   "ordenantes_distintos_del_destino", "segundos_desde_ultima_entrada_al_ordenante"],
+      "properties": {
+        "transacciones_previas_del_ordenante": {"type": "integer"},
+        "destinatarios_distintos_del_ordenante": {"type": "integer"},
+        "ordenantes_distintos_del_destino": {"type": "integer"},
+        "segundos_desde_ultima_entrada_al_ordenante": {"type": ["integer", "null"]}
+      }
+    }
+  },
+  "$defs": {
+    "extremo": {
+      "type": "object", "additionalProperties": false, "required": ["entidad", "cuenta"],
+      "properties": {"entidad": {"type": "integer"}, "cuenta": {"type": "string"}}
+    }
+  }
+}

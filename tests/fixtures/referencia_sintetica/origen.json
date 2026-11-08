@@ -1,0 +1,8 @@
+{
+  "generador": "herramientas/referencia/generar_dataset_sintetico.py",
+  "filas": 60000,
+  "semilla": 11,
+  "sha256_csv": "7c621dfa4ea1420df2770c5ec70162772142f95c7b139f1a2eeefa0de9dccf43",
+  "entorno_referencia": "python 3.12.15, numpy 2.0.2, pandas 2.3.3, scikit-learn 1.6.1, xgboost 3.2.0",
+  "nota": "Generado con herramientas/referencia/ejecutar_notebook_referencia.py (c\u00f3digo exacto del notebook v1, 60 \u00e1rboles)."
+}

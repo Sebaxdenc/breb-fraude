@@ -1,0 +1,133 @@
+# Plan de implementación · Entregable 2
+
+Plan para construir la arquitectura del Entregable 1 v2.0 (`documento/Entregable1_BreB_v2.pdf`). Las fases siguen los hitos S13 a S16 de la sección 5.2 y los responsables de la sección 5.1.
+
+**Cómo usarlo:** cada tarea se marca `[x]` en el mismo pull request que la completa, con el enlace del PR al final de la línea. Si una tarea cambia de responsable o de fecha, se edita aquí.
+
+| Integrante | Rol |
+|---|---|
+| **SA** · Samuel Arango | Ingesta y streaming |
+| **MS** · Mateo Sanz Medina | Almacenamiento |
+| **NC** · Nathalia Cardoza | DataOps |
+| **SM** · Sebastián Medina | Consumo y gobernanza |
+
+## Estado general
+| Fase | Hito | Avance |
+|---|---|---|
+| 0. Repositorio y contratos | S13 | 7 de 10 |
+| 1. Modelo dentro del Job 2 | S13 | 8 de 10 |
+| 2. Infraestructura local | S13 | 0 de 9 |
+| 3. Ingesta | S13–S14 | 2 de 5 |
+| 4. Streaming | S14 | 0 de 8 |
+| 5. Batch y orquestación | S15 | 0 de 6 |
+| 6. Consumo y gobernanza | S15 | 0 de 6 |
+| 7. Pruebas y endurecimiento | S16 | 0 de 6 |
+| 8. Documento y sustentación | S16 | 0 de 5 |
+
+---
+
+## Fase 0 · Repositorio y contratos (S13)
+- [x] Estructura del repositorio y paquete `breb` (`src/breb`), con pruebas en `tests/` · NC
+- [x] Contrato del evento 1.0 en JSON Schema y validación `errores_evento` (RF2) · SA
+- [x] Contrato de la alerta 1.0 (RF10) · SM
+- [x] Contrato de variables del modelo: `modelo/aml_xgb/model_meta.json` · NC
+- [x] Documentos de MongoDB documentados en `contratos/README.md` (RF8) · MS
+- [x] Notebook de entrenamiento v1 versionado en `modelo/entrenamiento/` · NC
+- [x] Subir el repositorio a GitHub: [Sebaxdenc/breb-fraude](https://github.com/Sebaxdenc/breb-fraude) (privado) · SM
+- [ ] Agregar a los otros tres integrantes como colaboradores y proteger `main` (pull request con una aprobación) · SM
+- [ ] Copiar `aml_xgb.json` y `golden_sample.parquet` de la salida de Kaggle a `modelo/aml_xgb/` · NC
+- [ ] Congelar los cuatro contratos: PR aprobado por los cuatro integrantes · todos
+
+## Fase 1 · Modelo dentro del Job 2 (S13, riesgo R8)
+- [x] Motor de las 58 variables con estado por cuenta, par y banco (`src/breb/features/motor.py`) · SA
+- [x] Paridad exacta con el notebook en datos sintéticos: 58 de 58 variables idénticas y score idéntico, entre el entorno de Kaggle (NumPy 2) y el de Spark (NumPy 1.26) · SA
+- [x] Puntuador sin scikit-learn ni `ohe.joblib` (`src/breb/modelo/puntuador.py`, RF14) · SA
+- [x] Estado en MongoDB idempotente por micro-batch, con prueba de reintento tras falla parcial (`src/breb/estado/almacen.py`, RNF-03) · MS
+- [x] Lógica completa del micro-batch sin Spark: variables, score, estado, decisiones y alertas (`src/breb/job2/microbatch.py`) · SA
+- [x] Cálculo del estado inicial con el mismo motor (`src/breb/estado/inicial.py`) · MS
+- [x] Notebook de verificación con datos reales para Kaggle (`herramientas/kaggle/verificar_paridad_kaggle.ipynb`) · SM
+- [x] Notebook de demo del modelo (`herramientas/kaggle/demo_modelo_breb.ipynb`) · SM
+- [ ] Ejecutar la verificación en Kaggle con LI-Small real y obtener **PARIDAD OK** · SM
+- [ ] Registrar tiempo y RAM del estado inicial real (cuentas, pares, bancos) para dimensionar MongoDB · MS
+
+## Fase 2 · Infraestructura local (S13) · NC
+Criterio del hito S13: `docker compose up` levanta todo con el perfil de desarrollo y el productor publica en Kafka.
+- [ ] Elegir el almacenamiento compatible con S3 que reemplaza a MinIO y validarlo con Delta Lake: escritura, MERGE, OPTIMIZE y VACUUM (riesgo R10)
+- [ ] `infra/docker-compose.yml` con perfiles `dev` y `completo`: Kafka 3.6 KRaft (1 bróker en `dev`, 3 en `completo`), almacenamiento S3, Spark 3.5 (master y 2 workers), MongoDB 7 replica set de 3, DynamoDB Local, PostgreSQL 15, Hive Metastore, Trino, Metabase, moto y Airflow 3
+- [ ] Imagen de Spark: Python 3.11, numpy 1.26.4, pandas 2.2.3, xgboost-cpu 3.2.0, delta-spark, paquete `breb` y artefactos del modelo copiados con `COPY`
+- [ ] Creación de tópicos: `breb.transacciones.raw` con 6 particiones, `replication.factor=3`, `min.insync.replicas=2`, `message.timestamp.type=LogAppendTime`, retención de 7 días
+- [ ] Inicialización del replica set de MongoDB, `electionTimeoutMillis=2000` y usuarios
+- [ ] Buckets `lakehouse-bronze`, `lakehouse-silver`, `lakehouse-gold` y tabla `delta_log` en DynamoDB Local
+- [ ] Límites de recursos por servicio y `spark.cores.max` por aplicación
+- [ ] Medir la RAM del perfil `completo` (riesgo R5)
+- [ ] README: levantar el stack desde cero
+
+## Fase 3 · Ingesta (S13–S14) · SA
+- [x] Conversión de filas de IBM AML a eventos: `seq`, UUID v5, sin etiqueta (`src/breb/productor/eventos.py`)
+- [x] Generador de eventos inválidos para demostrar la cuarentena
+- [ ] Productor: lee LI-Small, reproduce desde el corte de validación a una tasa configurable, por escalones (100, 250, 500, 750 y 1.000 ev/s), con un porcentaje opcional de inválidos
+- [ ] API de ingesta: recibe lotes por HTTPS y publica en Kafka con `acks=all` y `enable.idempotence=true` (decisión D3)
+- [ ] Medir fuente → Kafka con p99 < 300 ms (RF1)
+
+## Fase 4 · Streaming (S14)
+Criterio del hito S14: un evento llega a Bronze, Silver y MongoDB; el Job 2 publica alertas; p99 < 3 s.
+- [ ] Job 1: Kafka → validación → Bronze con `is_valid`, `validation_errors`, `raw_payload` y metadatos de Kafka; trigger de 30 s (RF2, RF5) · SA
+- [ ] Job 2: Kafka → validación → `dropDuplicatesWithinWatermark` → ventanas del RF3 (5 y 10 min, modo update) → `foreachBatch` que llama a `procesar_microbatch` → MongoDB, SNS y `risk_decisions` con `txnAppId`/`txnVersion` (RF3, RF4, RF10, RF13, RF14) · SA
+- [ ] Trigger de 1 s, RocksDB como state store y `spark.sql.shuffle.partitions` igual a los núcleos (ADR 02) · SA
+- [ ] `StreamingQueryListener` → tabla de métricas (duración del micro-batch, filas por segundo, `maxOffsetsBehindLatest`) · SM
+- [ ] Latencia por evento: `decision_ts − kafka_ts` guardada en la tabla de métricas (RNF-02) · SM
+- [ ] Job 3: Bronze válidos → Silver, deduplicado con watermark de 10 min y MERGE por `transaction_uuid` (RF6) · MS
+- [ ] Delta en modo multi-cluster con `S3DynamoDBLogStore` (RNF-05, riesgo R9) · MS
+- [ ] Paridad en línea: comparar las variables guardadas en `risk_decisions` con `golden_sample.parquet` (decisión D2) · SA
+
+## Fase 5 · Batch y orquestación (S15)
+- [ ] Job 4: Gold en estrella (`Fact_Transferencias`, `Dim_Cuenta` SCD 2, `Dim_Entidad_Financiera`, `Dim_Canal`, `Dim_Tiempo`) con MERGE (RF7) · MS
+- [ ] Carga de las etiquetas `Is Laundering` a Gold para medir precisión y recall · MS
+- [ ] DAG `breb_lakehouse_pipeline` cada 15 min: sensores → dimensiones → hechos → calidad → sincronización a MongoDB → OPTIMIZE y VACUUM (RF9) · NC
+- [ ] DAG `reprocess_quarantine` bajo demanda (RF12) · NC
+- [ ] DAG `bootstrap_state`: `breb.estado.inicial.calcular` + `AlmacenMongo.cargar_estado_inicial` (RF8) · NC
+- [ ] Los tres DAG en verde de punta a punta · NC
+
+## Fase 6 · Consumo y gobernanza (S15) · SM
+- [ ] SNS y SQS en moto: tópico `fraud-alerts-critical`, una cola por entidad y suscripción de los analistas (RF15)
+- [ ] Servicio de la entidad: lee su cola SQS, descarta `transaction_uuid` repetidos y escribe `estado_retencion` en MongoDB
+- [ ] Hive Metastore y Trino con el conector de Delta; tablas de las tres capas registradas (RF11)
+- [ ] Reglas de acceso de Trino: analistas solo Gold, cumplimiento las tres capas en solo lectura
+- [ ] Metabase: tableros de las cuatro preguntas de la sección 1.3, más alertas y latencia
+- [ ] Linaje: reconstruir una transacción por `transaction_uuid` en las tres capas en menos de 5 min (RNF-06)
+
+## Fase 7 · Pruebas y endurecimiento (S16)
+- [ ] Prueba de carga por escalones en el equipo de la demo; declarar la tasa con 30 % de margen (RNF-01, RNF-02) · SM y SA
+- [ ] Falla de un bróker durante la carga (RNF-01, RNF-03) · SA y NC
+- [ ] Falla de un ejecutor de Spark (RNF-05) · MS
+- [ ] Aislar el primario de MongoDB y medir el tiempo de elección (RNF-04) · MS
+- [ ] README validado desde cero en una máquina limpia · NC
+- [ ] Ensayo completo de la demo de 8 minutos el día anterior · todos
+
+## Fase 8 · Documento y sustentación (S16)
+- [ ] Completar en el documento la tasa sostenida y el p99 medidos · SM
+- [ ] Publicar el `.drawio` y poner su enlace en la sección 3 · SM
+- [ ] Actualizar el documento: `transaction_uuid` es UUID v5 (no v4) y resultado de la decisión D2 · SA
+- [ ] Guion de la demo con los pasos del diagrama · todos
+- [ ] Cada integrante puede explicar cualquier componente · todos
+
+---
+
+## Decisiones pendientes
+| # | Decisión | Opciones | Responsable | Plazo |
+|---|---|---|---|---|
+| D1 | Almacenamiento S3 local | Por evaluar: alternativas compatibles con la API S3 que sigan publicando imágenes. Criterio: pasa las pruebas de Delta de la fase 2 | NC | S13 |
+| D2 | Particiones del tópico frente al orden de las variables | Con varias particiones, dos eventos muy cercanos pueden caer en micro-batches distintos y procesarse en otro orden, lo que cambia un poco los acumulados (sobre todo los de banco). Medirlo con la paridad en línea; si la diferencia afecta decisiones, usar 1 partición para la demo | SA | S14 |
+| D3 | Tecnología de la API de ingesta | Contenedor Python mínimo. Si usan FastAPI, aclarar que su consumidor es Kafka, no el motor de autorización que se eliminó | SA | S13 |
+| D5 | Fechas | Fechas reales de S13 a S16 y del día de la sustentación | todos | ya |
+
+## Hallazgos que el equipo debe conocer
+- **El motor replica el notebook exactamente, incluidas sus particularidades.** `is_reciprocal_loop` vale 1 cuando el mismo par ordenante→destino ya transó antes, no cuando el destino le había enviado al ordenante: el notebook agrega y busca la clave invertida. `net_flow` combina acumulados de dos cuentas distintas. No se corrigen porque el modelo se entrenó así.
+- **Las sumas usan compensación de Kahan** porque `groupby().cumsum()` de pandas la usa. Sin ella, algunas variables cambian en el último decimal.
+- **El orden importa.** Las transacciones del mismo minuto se procesan en el orden del CSV (`seq`). Por eso el productor debe emitir en ese orden y el Job 2 ordena cada micro-batch por `seq`.
+
+## Verificación rápida
+```bash
+uv venv -p 3.11 .venv && uv pip install -p .venv/bin/python -e ".[dev]"
+.venv/bin/python -m pytest -q        # 14 pruebas, unos 15 s
+```

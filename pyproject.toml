@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "breb-fraude"
+version = "0.1.0"
+description = "Bre-B · detección de fraude en tiempo real (EAFIT ST1630, Entregable 2)"
+requires-python = ">=3.10,<3.12"
+# Versiones de la imagen de Spark: PySpark 3.5 admite hasta Python 3.11 y exige numpy < 2.
+dependencies = [
+  "numpy==1.26.4",
+  "pandas==2.2.3",
+  "pyarrow==17.0.0",
+  "xgboost-cpu==3.2.0",
+  "pymongo==4.10.1",
+  "jsonschema==4.23.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest==8.3.4", "mongomock==4.3.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+breb = ["contratos/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
