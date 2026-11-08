@@ -3,7 +3,9 @@ __pycache__/
 *.pyc
 .pytest_cache/
 *.egg-info/
-datos/
+# solo la carpeta datos/ de la raíz (src/breb/datos/ es código)
+/datos/
 *.csv
 !tests/fixtures/**
 .ipynb_checkpoints/
+build/

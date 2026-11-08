@@ -1,0 +1,11 @@
+# Python de la imagen de Spark (master, workers, jobs y herramientas).
+# PySpark 3.5 admite hasta Python 3.11 y exige numpy < 2 (ver pyproject.toml).
+pyspark==3.5.9
+delta-spark==3.3.3
+numpy==1.26.4
+pandas==2.2.3
+pyarrow==17.0.0
+xgboost-cpu==3.2.0
+pymongo==4.10.1
+jsonschema==4.23.0
+boto3==1.40.0

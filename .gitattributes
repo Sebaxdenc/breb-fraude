@@ -1,0 +1,12 @@
+# Finales de línea LF en todo el texto: los scripts se ejecutan dentro de contenedores Linux,
+# también cuando el repositorio se clona en Windows.
+* text=auto eol=lf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+*.parquet binary
+*.png binary
+*.jpg binary
+*.pdf binary
+*.docx binary
+*.jar binary
+*.joblib binary

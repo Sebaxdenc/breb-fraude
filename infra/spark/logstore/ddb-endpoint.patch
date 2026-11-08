@@ -1,0 +1,23 @@
+--- a/io/delta/storage/S3DynamoDBLogStore.java
++++ b/io/delta/storage/S3DynamoDBLogStore.java
+@@ -84,6 +84,8 @@
+     public static final String READ_RETRIES = "read.retries";
+     public static final String DDB_CLIENT_TABLE = "ddb.tableName";
+     public static final String DDB_CLIENT_REGION = "ddb.region";
++    // [breb] Endpoint opcional de DynamoDB (p. ej. DynamoDB Local). Sin él, se usa el de la región.
++    public static final String DDB_CLIENT_ENDPOINT = "ddb.endpoint";
+     public static final String DDB_CLIENT_CREDENTIALS_PROVIDER = "credentials.provider";
+     public static final String DDB_CREATE_TABLE_RCU = "provisionedThroughput.rcu";
+     public static final String DDB_CREATE_TABLE_WCU = "provisionedThroughput.wcu";
+@@ -325,6 +327,11 @@
+                     ReflectionUtils.createAwsCredentialsProvider(credentialsProviderName, initHadoopConf());
+             final AmazonDynamoDBClient client = new AmazonDynamoDBClient(awsCredentialsProvider);
+             client.setRegion(Region.getRegion(Regions.fromName(regionName)));
++            final String endpoint = getParam(initHadoopConf(), DDB_CLIENT_ENDPOINT, null);
++            if (endpoint != null && !endpoint.isEmpty()) {
++                LOG.info("using endpoint {}", endpoint);
++                client.setEndpoint(endpoint);
++            }
+             return client;
+         } catch (ReflectiveOperationException e) {
+             throw new java.io.IOException(e);

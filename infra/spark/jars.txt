@@ -1,0 +1,15 @@
+# JARs que se agregan a $SPARK_HOME/jars (PySpark 3.5.9, Scala 2.12, Hadoop 3.3.4).
+# Formato: grupo:artefacto:versión[:clasificador] sha1 [compilacion]
+# Las líneas marcadas "compilacion" solo se usan para compilar el LogStore parcheado y no entran a la imagen.
+io.delta:delta-spark_2.12:3.3.3 8083a378e42f6d04c5a78cb6e8566f59f4e9ed1c
+io.delta:delta-storage:3.3.3 a5bf8cebb3a669f83b14a8f4a707545ed861303d
+io.delta:delta-storage-s3-dynamodb:3.3.3 ff443ba9e14d32703458c99bc4ae27f04c71f575
+org.apache.hadoop:hadoop-aws:3.3.4 a65839fbf1869f81a1632e09f415e586922e4f80
+com.amazonaws:aws-java-sdk-bundle:1.12.262 02deec3a0ad83d13d032b1812421b23d7a961eea
+org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.9 17ef44bb094642e6cbe4c31283b49b0e524225a3
+org.apache.spark:spark-token-provider-kafka-0-10_2.12:3.5.9 a925bf703b98506dd130cb56584eb2e8bd325380
+org.apache.kafka:kafka-clients:3.4.1 a2f55251deb3d31a21903a0cfbd4d1fa6b7463ca
+org.apache.commons:commons-pool2:2.11.1 8970fd110c965f285ed4c6e40be7630c62db6f68
+org.apache.hadoop:hadoop-client-api:3.3.4 6339a8f7279310c8b1f7ef314b592d8c71ca72ef compilacion
+org.slf4j:slf4j-api:2.0.7 41eb7184ea9d556f23e18b5cb99cad1f8581fc00 compilacion
+io.delta:delta-storage-s3-dynamodb:3.3.3:sources 66b5c8ab61a09d4642449728f06887b24d07e1a6 compilacion

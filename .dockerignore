@@ -1,0 +1,11 @@
+# Contexto de build de infra/spark/Dockerfile (raíz del repositorio): solo entra lo que copia el Dockerfile.
+**
+!pyproject.toml
+!src/
+!modelo/aml_xgb/
+!infra/spark/
+!infra/init/
+!herramientas/infra/
+**/__pycache__
+**/*.pyc
+**/*.egg-info
