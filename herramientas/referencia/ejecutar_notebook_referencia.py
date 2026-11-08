@@ -2,8 +2,12 @@
 dataset con el esquema de LI-Small y guarda la referencia para la prueba de paridad.
 
 Debe correr en un entorno igual al de Kaggle (Python 3.12, numpy 2.0.2, pandas 2.3.3,
-scikit-learn 1.6.1, xgboost 3.2.0). Solo cambia rutas y reduce el número de árboles para
-que termine rápido: el cálculo de variables queda intacto.
+numexpr 2.14.2, scikit-learn 1.6.1, xgboost 3.2.0). Solo cambia rutas y reduce el número de
+árboles para que termine rápido: el cálculo de variables queda intacto.
+
+En Kaggle el notebook procesa unos 5 millones de filas, y con más de 1.000.000 de elementos pandas
+calcula la aritmética con numexpr, que redondea distinto a NumPy. Para que un dataset chico produzca
+los mismos números que Kaggle, este script baja ese umbral a 0.
 
 Además de lo que exporta el notebook (modelo, metadatos, muestra de referencia), guarda
 todas las filas del test con sus variables y su score, para comparar fila por fila.
@@ -37,6 +41,11 @@ def main(dir_dataset: str, dir_salida: str) -> None:
         assert src.count(viejo) == 1, f"no encuentro {viejo!r} exactamente una vez"
         src = src.replace(viejo, nuevo)
     src = src.replace("plt.show()", "plt.close('all')")
+
+    import numexpr  # noqa: F401,E402  (si falta, pandas usaría NumPy y la referencia no sería la de Kaggle)
+    from pandas.core.computation import expressions  # noqa: E402
+    assert expressions.USE_NUMEXPR, "pandas no está usando numexpr (compute.use_numexpr)"
+    expressions._MIN_ELEMENTS = 0
     g = {"__name__": "__main__"}
     exec(compile(src, str(CODIGO), "exec"), g)
 

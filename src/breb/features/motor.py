@@ -18,8 +18,16 @@ Particularidades del notebook que se replican tal cual (no son errores de este m
   del destino (dos cuentas distintas).
 - `sender_inflow_gap_sec` solo considera entradas de fondos de un minuto anterior
   (merge_asof con allow_exact_matches=False); entre varias entradas de ese minuto toma la última.
+
+El notebook corrió sobre unos 5 millones de filas. Con más de 1.000.000 de elementos, pandas evalúa la
+aritmética con numexpr (`pandas.core.computation.expressions._MIN_ELEMENTS`), que se comporta distinto a
+NumPy en dos puntos. El Job 2 procesa lotes chicos, donde pandas usa NumPy, así que se replican a mano:
+- float32 combinado con un escalar de Python (`s + 1e-5`, `1.0 - s`) da float64, no float32.
+- `x ** 2` se calcula con pow() de la libm, que en cerca del 0,08 % de los montos no da igual a x * x.
 """
 from __future__ import annotations
+
+import math
 
 import numpy as np
 import pandas as pd
@@ -49,6 +57,17 @@ def banco_vacio() -> dict:
 
 def clave_par(origen: str, destino: str) -> str:
     return f"{origen}|{destino}"
+
+
+def _f64(s: pd.Series) -> pd.Series:
+    """Promoción de numexpr: float32 operado con un escalar se calcula en float64."""
+    return s.astype(np.float64)
+
+
+def _cuadrado(s: pd.Series) -> pd.Series:
+    """`s ** 2` como lo calcula numexpr: pow() de la libm, elemento por elemento."""
+    v = s.to_numpy(dtype=np.float64)
+    return pd.Series(np.fromiter((math.pow(x, 2.0) for x in v), dtype=np.float64, count=len(v)), index=s.index)
 
 
 def _kahan(estado: dict, acc: str, comp: str, valor: float) -> float:
@@ -138,7 +157,7 @@ class MotorVariables:
 
             # ---- actualizaciones
             out["amt_sum_from"][i] = _kahan(F, "out_acc", "out_comp", paid)
-            out["sumsq_cum"][i] = _kahan(F, "out2_acc", "out2_comp", paid ** 2)
+            out["sumsq_cum"][i] = _kahan(F, "out2_acc", "out2_comp", math.pow(paid, 2.0))
             F["out_n"] += 1
             F["out_last_ts"] = ts
             F["out_dist"] += primera
@@ -200,11 +219,11 @@ def derivar(df: pd.DataFrame, crudas: pd.DataFrame, num_features: list[str]) -> 
 
     prior_count = c["sender_prior_count"].astype(np.int64)
     prior_sum = d["amt_sum_from"] - paid
-    prior_sumsq = c["sumsq_cum"] - paid ** 2
+    prior_sumsq = c["sumsq_cum"] - _cuadrado(paid)
     d["sender_avg_amt"] = (prior_sum / prior_count.replace(0, np.nan)).fillna(0.0).astype(np.float32)
-    var = prior_sumsq / prior_count.replace(0, np.nan) - d["sender_avg_amt"].astype(np.float64) ** 2
+    var = prior_sumsq / prior_count.replace(0, np.nan) - _cuadrado(d["sender_avg_amt"].astype(np.float64))
     d["sender_std_amt"] = np.sqrt(var.clip(lower=0)).fillna(0.0).astype(np.float32)
-    d["z_score_amount_sender"] = ((paid - d["sender_avg_amt"]) / (d["sender_std_amt"] + 1e-5)).astype(np.float32)
+    d["z_score_amount_sender"] = ((paid - d["sender_avg_amt"]) / (_f64(d["sender_std_amt"]) + 1e-5)).astype(np.float32)
     d["is_just_under_5k"] = ((paid >= 4500) & (paid < 5000)).astype(np.float32)
     d["is_round_100"] = (paid % 100 == 0).astype(np.float32)
     d["amount_cents_fraction"] = (paid % 1).astype(np.float32)
@@ -222,7 +241,7 @@ def derivar(df: pd.DataFrame, crudas: pd.DataFrame, num_features: list[str]) -> 
     d["chain_turnaround_sec"] = (ts_sec - c["prev_received_ts"]).fillna(SIN_TIEMPO_CADENA).astype(np.float32)
     d["chain_amount_preservation_ratio"] = (paid / (c["prev_received_amt"] + 1e-5)).fillna(0.0).astype(np.float32)
     d["is_rapid_forwarding"] = (d["chain_turnaround_sec"] < 3600).astype(np.float32)
-    d["pass_through_velocity"] = ((1.0 - mule) / (np.log1p(d["chain_turnaround_sec"]) + 1.0)).astype(np.float32)
+    d["pass_through_velocity"] = ((1.0 - _f64(mule)) / (_f64(np.log1p(d["chain_turnaround_sec"])) + 1.0)).astype(np.float32)
     d["counterparty_revisit_count"] = c["pair_n_prev"].astype(np.float32)
     d["is_reciprocal_loop"] = (c["pair_n_prev"] > 0).astype(np.float32)
 
@@ -236,8 +255,8 @@ def derivar(df: pd.DataFrame, crudas: pd.DataFrame, num_features: list[str]) -> 
     ratio = np.where(has, paid.to_numpy() / (np.nan_to_num(c["matched_amt"].to_numpy()) + 1e-5), 0.0)
     d["passthrough_amount_ratio"] = ratio.astype(np.float32)
     d["passthrough_velocity_true"] = (d["passthrough_amount_ratio"].clip(upper=2.0)
-                                      / (np.log1p(d["sender_inflow_gap_sec"]) + 1.0)).astype(np.float32)
-    pair_rank = d["counterparty_revisit_count"] + 1.0
+                                      / (_f64(np.log1p(d["sender_inflow_gap_sec"])) + 1.0)).astype(np.float32)
+    pair_rank = _f64(d["counterparty_revisit_count"]) + 1.0
     d["pair_amt_share_from"] = (c["pair_cum_paid"] / (d["amt_sum_from"] + 1e-5)).astype(np.float32)
     d["pair_tx_share_from"] = (pair_rank / (d["tx_count_from"] + 1e-5)).astype(np.float32)
     d["pair_tx_share_to"] = (pair_rank / (d["tx_count_to"] + 1e-5)).astype(np.float32)

@@ -5,7 +5,9 @@ motor de variables del Job 2 calcula exactamente lo mismo que el notebook de
 entrenamiento. Por eso fuerza los casos difíciles: varias transacciones de la
 misma cuenta en el mismo minuto, pares repetidos y recíprocos, autotransferencias
 (Reinvestment), cambio de moneda, cuentas con el mismo número en bancos distintos,
-filas duplicadas, CSV parcialmente desordenado y una cola posterior al rango primario.
+filas duplicadas, CSV parcialmente desordenado, una cola posterior al rango primario y
+cuentas que pagan montos casi constantes (su desviación estándar sale de restar dos números
+casi iguales, así que un error de 1 ulp en x ** 2 se nota en `sender_std_amt`).
 
 Es determinista: la misma semilla produce el mismo archivo con cualquier versión de NumPy
 (usa numpy.random.default_rng / PCG64).
@@ -26,6 +28,12 @@ TASA = {"US Dollar": 1.0, "Euro": 0.85, "Yuan": 6.7, "Rupee": 77.0, "UK Pound": 
         "Brazil Real": 5.3, "Ruble": 75.0, "Saudi Riyal": 3.75, "Shekel": 3.3, "Bitcoin": 0.00009}
 FORMATOS = ["Cheque", "Credit Card", "ACH", "Cash", "Wire", "Bitcoin", "Reinvestment"]
 P_FORMATOS = [0.36, 0.25, 0.12, 0.10, 0.04, 0.03, 0.10]
+# Montos a para pagos que alternan a, a + 0,02, a, a + 0,02, a. Con 2 y 4 pagos previos el promedio
+# (a + 0,01) cabe exacto en float32, la varianza real es 0,0001 y pow(a, 2) de la libm (glibc >= 2.28)
+# no da igual a a * a. Ahí `sender_std_amt` distingue cómo se calculó el cuadrado.
+MONTOS_CASI_CONSTANTES = [20438.49, 20488.49, 22691.99, 23824.99, 25293.99, 26775.49, 26837.99, 28206.99,
+                          28219.49, 28256.99, 28269.49, 28281.99, 28344.49, 29750.99, 29775.99, 29838.49,
+                          31157.49, 31232.49, 31257.49, 31419.99, 32713.99, 32726.49, 33341.99, 33366.99]
 INICIO = datetime(2022, 9, 1)
 FIN_PRIMARIO = datetime(2022, 9, 11)
 ENCABEZADO = ["Timestamp", "From Bank", "Account", "To Bank", "Account", "Amount Received",
@@ -156,6 +164,16 @@ def generar(salida: pathlib.Path, filas: int = 180_000, semilla: int = 7) -> pat
             agregar(minuto, int(rng.integers(0, n_cuentas)), int(rng.integers(0, n_cuentas)),
                     str(rng.choice(FORMATOS[:5])), 1)
             contador += 1
+
+    # 3b) pagos casi constantes (cuotas) desde cuentas nuevas, en las últimas 30 h para que caigan en el test
+    for a in MONTOS_CASI_CONSTANTES:
+        cuentas.append((int(rng.choice(bancos)), f"{int(rng.integers(0, 16 ** 9)):09X}"))
+    moneda_cuenta = np.append(moneda_cuenta, ["US Dollar"] * len(MONTOS_CASI_CONSTANTES))
+    for j, a in enumerate(MONTOS_CASI_CONSTANTES):
+        o, d = n_cuentas + j, int(rng.integers(0, n_cuentas))
+        inicio = minutos_total - 30 * 60 + int(rng.integers(0, 60))
+        for k in range(5):
+            agregar(inicio + 300 * k, o, d, "ACH", 0, a if k % 2 == 0 else round(a + 0.02, 2))
 
     # 4) duplicados exactos y cola posterior al rango primario (60 % lavado)
     for i in rng.choice(len(filas_out), size=25, replace=False):

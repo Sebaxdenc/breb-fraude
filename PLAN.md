@@ -7,7 +7,7 @@ Plan para construir la arquitectura del Entregable 1 v2.0 (`documento/Entregable
 ## Estado general
 | Fase | Hito | Avance |
 |---|---|---|
-| 0. Repositorio y contratos | S13 | 7 de 10 |
+| 0. Repositorio y contratos | S13 | 8 de 10 |
 | 1. Modelo dentro del Job 2 | S13 | 8 de 10 |
 | 2. Infraestructura local | S13 | 0 de 9 |
 | 3. Ingesta | S13–S14 | 2 de 5 |
@@ -28,19 +28,19 @@ Plan para construir la arquitectura del Entregable 1 v2.0 (`documento/Entregable
 - [x] Notebook de entrenamiento v1 versionado en `modelo/entrenamiento/`
 - [x] Subir el repositorio a GitHub: [Sebaxdenc/breb-fraude](https://github.com/Sebaxdenc/breb-fraude) (privado)
 - [ ] Agregar al resto del equipo como colaboradores y proteger `main` (pull request con una aprobación)
-- [ ] Copiar `aml_xgb.json` y `golden_sample.parquet` de la salida de Kaggle a `modelo/aml_xgb/`
+- [x] Copiar `aml_xgb.json` y `golden_sample.parquet` de la salida de Kaggle a `modelo/aml_xgb/`
 - [ ] Congelar los cuatro contratos: PR aprobado por el equipo
 
 ## Fase 1 · Modelo dentro del Job 2 (S13, riesgo R8)
 - [x] Motor de las 58 variables con estado por cuenta, par y banco (`src/breb/features/motor.py`)
-- [x] Paridad exacta con el notebook en datos sintéticos: 58 de 58 variables idénticas y score idéntico, entre el entorno de Kaggle (NumPy 2) y el de Spark (NumPy 1.26)
+- [x] Paridad exacta con el notebook en datos sintéticos: 58 de 58 variables idénticas y score idéntico, entre el entorno de Kaggle (NumPy 2) y el de Spark (NumPy 1.26), con la aritmética de numexpr que usa pandas en Kaggle
 - [x] Puntuador sin scikit-learn ni `ohe.joblib` (`src/breb/modelo/puntuador.py`, RF14)
 - [x] Estado en MongoDB idempotente por micro-batch, con prueba de reintento tras falla parcial (`src/breb/estado/almacen.py`, RNF-03)
 - [x] Lógica completa del micro-batch sin Spark: variables, score, estado, decisiones y alertas (`src/breb/job2/microbatch.py`)
 - [x] Cálculo del estado inicial con el mismo motor (`src/breb/estado/inicial.py`)
 - [x] Notebook de verificación con datos reales para Kaggle (`herramientas/kaggle/verificar_paridad_kaggle.ipynb`)
 - [x] Notebook de demo del modelo (`herramientas/kaggle/demo_modelo_breb.ipynb`)
-- [ ] Ejecutar la verificación en Kaggle con LI-Small real y obtener **PARIDAD OK**
+- [ ] Ejecutar la verificación en Kaggle con LI-Small real y obtener **PARIDAD OK**. Primera corrida: 54 de 58 variables idénticas, score idéntico y 20.000 de 20.000 decisiones iguales; las 4 diferencias (redondeo de numexpr) ya están corregidas y falta repetirla
 - [ ] Registrar tiempo y RAM del estado inicial real (cuentas, pares, bancos) para dimensionar MongoDB
 
 ## Fase 2 · Infraestructura local (S13)
@@ -116,6 +116,7 @@ Criterio del hito S14: un evento llega a Bronze, Silver y MongoDB; el Job 2 publ
 ## Hallazgos que el equipo debe conocer
 - **El motor replica el notebook exactamente, incluidas sus particularidades.** `is_reciprocal_loop` vale 1 cuando el mismo par ordenante→destino ya transó antes, no cuando el destino le había enviado al ordenante: el notebook agrega y busca la clave invertida. `net_flow` combina acumulados de dos cuentas distintas. No se corrigen porque el modelo se entrenó así.
 - **Las sumas usan compensación de Kahan** porque `groupby().cumsum()` de pandas la usa. Sin ella, algunas variables cambian en el último decimal.
+- **El motor replica la aritmética de numexpr.** En Kaggle el notebook procesa unos 5 millones de filas y, con más de 1.000.000, pandas calcula con numexpr: float32 operado con un escalar da float64 y `x ** 2` usa pow() de la libm (en el 0,08 % de los montos no es igual a `x * x`). El Job 2 trabaja con lotes chicos, donde pandas usa NumPy, así que `derivar` hace esas conversiones a mano. Afecta `sender_std_amt`, `z_score_amount_sender`, `pass_through_velocity` y `passthrough_velocity_true`. Las pruebas son bit a bit y suponen Linux x86-64, como Kaggle y la imagen de Spark.
 - **El orden importa.** Las transacciones del mismo minuto se procesan en el orden del CSV (`seq`). Por eso el productor debe emitir en ese orden y el Job 2 ordena cada micro-batch por `seq`.
 
 ## Verificación rápida
