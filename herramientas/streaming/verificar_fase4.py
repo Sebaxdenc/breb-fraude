@@ -27,6 +27,7 @@ ap = argparse.ArgumentParser()
 ap.add_argument("--referencia", default="/opt/breb/modelo/aml_xgb/golden_sample.parquet",
                 help="parquet con seq, las 58 variables y score (golden_sample o la referencia sintética)")
 ap.add_argument("--meta", default="/opt/breb/modelo/aml_xgb/model_meta.json")
+ap.add_argument("--datos", default="/datos/productor", help="eventos_test.parquet y scores_test.parquet")
 ap.add_argument("--esperar", type=int, default=120, help="segundos máximos esperando a que los jobs se pongan al día")
 a = ap.parse_args()
 
@@ -104,9 +105,14 @@ chequear(n_risk == n_validos_uuid and n_risk_filas == n_risk,
 meta = json.load(open(a.meta))
 num = list(meta["num_features"])
 ref = pd.read_parquet(a.referencia)
-# La referencia no trae seq: son las primeras filas del test en orden. Se alinea con el primer seq de Silver
-# y se comprueba que cuenta ordenante, destino y minuto coincidan fila por fila.
-primer = silver.agg(F.min("seq")).first()[0]
+# La referencia no trae seq: son las primeras filas del test en orden. El primer seq del test sale de
+# datos/productor/eventos_test.parquet (o, si no está, del primer seq de Silver). Si la demo empezó más
+# adelante (tramo), Silver no tiene esas filas y la comparación se omite.
+ruta_eventos = os.path.join(a.datos, "eventos_test.parquet")
+if os.path.exists(ruta_eventos):
+    primer = int(pd.read_parquet(ruta_eventos, columns=["seq"])["seq"].min())
+else:
+    primer = silver.agg(F.min("seq")).first()[0]
 ref["seq"] = np.arange(primer, primer + len(ref), dtype=np.int64)
 claves = (silver.where(F.col("seq") < primer + len(ref))
           .select("seq", "source_account", "destination_account", "event_time").toPandas())
@@ -114,8 +120,9 @@ alineadas = ref[["seq", "from_node_key", "to_node_key", "timestamp"]].merge(clav
 coinciden = int(((alineadas["from_node_key"] == alineadas["source_account"])
                  & (alineadas["to_node_key"] == alineadas["destination_account"])
                  & (pd.to_datetime(alineadas["timestamp"]) == pd.to_datetime(alineadas["event_time"]))).sum())
-chequear(coinciden == len(alineadas),
-         f"referencia alineada por seq desde {primer:,}: {coinciden:,} de {len(alineadas):,} transacciones con las mismas cuentas y minuto")
+if len(alineadas):
+    chequear(coinciden == len(alineadas),
+             f"referencia alineada por seq desde {primer:,}: {coinciden:,} de {len(alineadas):,} transacciones con las mismas cuentas y minuto")
 ref = ref[["seq", "score"] + num]
 dec = risk.where(F.col("seq").isin([int(s) for s in ref["seq"]]) if len(ref) <= 50000 else F.lit(True)) \
           .select("seq", "risk_score", "variables").toPandas()
@@ -135,6 +142,17 @@ if len(juntos):
         print("     variables con diferencias (filas):", por_variable[por_variable > 0].sort_values(ascending=False).head(8).to_dict())
     print(f"     diferencia máxima de score: {dif_score.max():.2e} | decisiones iguales: {decisiones_iguales:,} de {len(juntos):,}")
     chequear(decisiones_iguales == len(juntos), "mismas decisiones que el notebook (score ≥ umbral)")
+
+# Paridad con la puntuación fuera de línea de todo el test (python -m breb.estado tramo), si existe
+ruta_scores = os.path.join(a.datos, "scores_test.parquet")
+if os.path.exists(ruta_scores):
+    off = pd.read_parquet(ruta_scores, columns=["seq", "score"])
+    lim = risk.agg(F.min("seq"), F.max("seq")).first()
+    off = off[(off["seq"] >= lim[0]) & (off["seq"] <= lim[1])]
+    en_linea = risk.select("seq", "risk_score").toPandas().merge(off, on="seq")
+    iguales = int((en_linea["risk_score"].to_numpy() == en_linea["score"].to_numpy(np.float64)).sum())
+    chequear(iguales == len(en_linea) > 0,
+             f"score idéntico a la puntuación fuera de línea del test en {iguales:,} de {len(en_linea):,} transacciones")
 
 # Latencia del RNF-02
 lat = risk.select(F.percentile_approx("latencia_ms", [0.5, 0.95, 0.99], 10000).alias("p"),

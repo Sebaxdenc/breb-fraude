@@ -15,11 +15,16 @@ from breb.datos import ibm_aml
 from breb.features.motor import MotorVariables, preparar
 
 
-def calcular(ruta_csv: str, dir_modelo: str) -> tuple[MotorVariables, dict]:
+def calcular(ruta_csv: str, dir_modelo: str, desde_seq: int | None = None) -> tuple[MotorVariables, dict]:
+    """Estado con todas las transacciones anteriores al corte de validación o, con `desde_seq`, anteriores a
+    ese seq: la reproducción puede empezar en cualquier punto del test (tramo de la demo)."""
     meta = json.loads((pathlib.Path(dir_modelo) / "model_meta.json").read_text())
     t0 = time.perf_counter()
     df = preparar(ibm_aml.cargar(ruta_csv, meta["primary_end"][:10]))
-    historia, replay = ibm_aml.dividir(df, meta["valid_cutoff"])
+    if desde_seq is None:
+        historia, replay = ibm_aml.dividir(df, meta["valid_cutoff"])
+    else:
+        historia, replay = df[df["seq"] < desde_seq], df[df["seq"] >= desde_seq]
     motor = MotorVariables()
     motor.procesar(historia)
     resumen = {

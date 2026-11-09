@@ -117,8 +117,12 @@ def publicar_alertas(sns, arn: str, alertas: list[dict]) -> None:
         r = sns.publish_batch(TopicArn=arn, PublishBatchRequestEntries=[
             {"Id": str(k), "Message": json.dumps(a, ensure_ascii=False),
              "MessageAttributes": {
-                 "entidad_origen": {"DataType": "Number", "StringValue": str(a["origen"]["entidad"])},
-                 "entidad_destino": {"DataType": "Number", "StringValue": str(a["destino"]["entidad"])}}}
+                 # `entidades` (origen y destino) es el atributo que filtra la cola de cada entidad: una sola
+                 # suscripción por cola, y una sola copia aunque las dos cuentas sean de la misma entidad.
+                 "entidades": {"DataType": "String.Array", "StringValue": json.dumps(
+                     sorted({str(a["origen"]["entidad"]), str(a["destino"]["entidad"])}))},
+                 "entidad_origen": {"DataType": "String", "StringValue": str(a["origen"]["entidad"])},
+                 "entidad_destino": {"DataType": "String", "StringValue": str(a["destino"]["entidad"])}}}
             for k, a in enumerate(parte)])
         if r.get("Failed"):
             raise RuntimeError(f"SNS rechazó {len(r['Failed'])} alertas: {r['Failed'][:2]}")

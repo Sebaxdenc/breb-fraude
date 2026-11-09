@@ -183,7 +183,10 @@ services:
     depends_on:
       seaweedfs: {condition: service_healthy}
       dynamodb-local: {condition: service_started}
-    environment: *spark-env
+      moto: {condition: service_started}
+    environment:
+      <<: *spark-env
+      SNS_ENDPOINT: http://moto:5000
     command: ["python", "/opt/breb/infra/init/crear_recursos.py"]
 
   # ---------------------------------------------------------------- Spark standalone
@@ -246,9 +249,24 @@ services:
       METABASE_URL: http://metabase:3000
       MONGO_MIEMBROS: ${MONGO_MIEMBROS}
       SNS_ENDPOINT: http://moto:5000
-    # datos/ para la carga del estado inicial (python -m breb.estado cargar)
-    volumes: ["../datos:/datos:ro"]
+    # datos/ para el estado inicial y el tramo de la demo (python -m breb.estado {tramo|cargar})
+    volumes: ["../datos:/datos"]
     command: ["bash"]
+
+  # Consumidores de alertas (RF15): docker compose run --rm entidad --entidades 70,12  |  --analistas
+  entidad:
+    <<: *spark
+    profiles: [herramientas]
+    restart: "no"
+    env_file: [credenciales/s3.env, credenciales/mongo-app.env]
+    environment:
+      SNS_ENDPOINT: http://moto:5000
+      MONGO_MIEMBROS: ${MONGO_MIEMBROS}
+    entrypoint: ["/usr/bin/tini", "--", "python", "-m", "breb.entidad"]
+    command: ["--analistas"]
+    deploy:
+      resources:
+        limits: {cpus: "0.5", memory: 256m}
 
   # ---------------------------------------------------------------- Jobs de streaming (fase 4)
   # docker compose --profile streaming up -d   (antes: estado inicial en MongoDB, ver README)
