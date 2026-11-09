@@ -9,7 +9,7 @@ Plan para construir la arquitectura del Entregable 1 v2.0 (`documento/Entregable
 |---|---|---|
 | 0. Repositorio y contratos | S13 | 8 de 10 |
 | 1. Modelo dentro del Job 2 | S13 | 10 de 10 |
-| 2. Infraestructura local | S13 | 9 de 13 |
+| 2. Infraestructura local | S13 | 10 de 14 |
 | 3. Ingesta | S13–S14 | 2 de 5 |
 | 4. Streaming | S14 | 0 de 8 |
 | 5. Batch y orquestación | S15 | 0 de 6 |
@@ -55,7 +55,8 @@ Criterio del hito S13: `docker compose up` levanta todo con el perfil de desarro
 - [x] Buckets `lakehouse-bronze`, `lakehouse-silver`, `lakehouse-gold` y tabla `delta_log` en DynamoDB Local (`infra/init/crear_recursos.py`)
 - [x] Límites de CPU y memoria por servicio
 - [ ] `spark.cores.max` por aplicación (se fija al crear cada job, fase 4)
-- [ ] Construir la imagen y correr `verificar_stack.py` y `prueba_delta_s3.py` en Docker en el equipo de la demo, en `dev` y en `completo`
+- [x] Perfil `dev` en Docker en el equipo de la demo (Windows 11, WSL 2): los tres servicios de inicio terminan en `Exited (0)`, `verificar_stack.py` da **STACK OK** y `prueba_delta_s3.py` da **PRUEBA DELTA OK** en 182 s. En reposo, los 7 contenedores usan 1,04 GiB ([#7](https://github.com/Sebaxdenc/breb-fraude/pull/7), [#8](https://github.com/Sebaxdenc/breb-fraude/pull/8))
+- [ ] Perfil `completo` en Docker en el equipo de la demo: los mismos dos scripts
 - [ ] Medir la RAM del perfil `completo` (riesgo R5)
 - [x] README: levantar el stack desde cero en Windows 11
 
@@ -124,6 +125,7 @@ Criterio del hito S14: un evento llega a Bronze, Silver y MongoDB; el Job 2 publ
 - **El motor replica la aritmética de numexpr.** En Kaggle el notebook procesa unos 5 millones de filas y, con más de 1.000.000, pandas calcula con numexpr: float32 operado con un escalar da float64 y `x ** 2` usa pow() de la libm (en el 0,08 % de los montos no es igual a `x * x`). El Job 2 trabaja con lotes chicos, donde pandas usa NumPy, así que `derivar` hace esas conversiones a mano. Afecta `sender_std_amt`, `z_score_amount_sender`, `pass_through_velocity` y `passthrough_velocity_true`. Las pruebas son bit a bit y suponen Linux x86-64, como Kaggle y la imagen de Spark.
 - **`S3DynamoDBLogStore` no deja configurar el endpoint de DynamoDB** (Delta 3.3.3): siempre usa el de la región de AWS. `infra/spark/logstore/` toma la fuente oficial, le agrega la opción `ddb.endpoint` y reemplaza la clase en el JAR. En AWS se usa el JAR original, sin esa opción.
 - **Kafka 3.6 ya no tiene soporte ni imagen oficial** (`apache/kafka` empieza en 3.7). El stack usa 4.3.2; el conector de Spark 3.5 trae kafka-clients 3.4.1, que funciona con brókers 4.x.
+- **Delta avisa `Found Delta commit N with a timestamp ... greater than the next commit timestamp`.** S3 guarda la hora de modificación al segundo, así que dos commits en el mismo segundo quedan con la misma hora, y Delta suma 1 ms al segundo. Solo afecta la consulta por hora (`TIMESTAMP AS OF`); la consulta por versión no cambia.
 - **El servicio IAM del filer de SeaweedFS no tiene autenticación.** Por eso solo se publica el puerto S3 (8333), y únicamente en 127.0.0.1.
 - **El orden importa.** Las transacciones del mismo minuto se procesan en el orden del CSV (`seq`). Por eso el productor debe emitir en ese orden y el Job 2 ordena cada micro-batch por `seq`.
 
