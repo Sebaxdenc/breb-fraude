@@ -8,6 +8,8 @@
 !infra/productor/
 !infra/init/
 !herramientas/infra/
+!herramientas/streaming/
+!jobs/
 **/__pycache__
 **/*.pyc
 **/*.egg-info

@@ -71,6 +71,23 @@ x-spark-env: &spark-env
   S3_ENDPOINT: http://seaweedfs:8333
   DYNAMODB_ENDPOINT: http://dynamodb-local:8000
 
+x-job: &job
+  image: breb-spark:local
+  pull_policy: never
+  profiles: [streaming]
+  restart: unless-stopped
+  env_file: [credenciales/s3.env, credenciales/mongo-app.env]
+  environment:
+    <<: *spark-env
+    KAFKA_BOOTSTRAP: ${KAFKA_BOOTSTRAP}
+    MONGO_MIEMBROS: ${MONGO_MIEMBROS}
+    SNS_ENDPOINT: http://moto:5000
+  volumes: [checkpoints:/checkpoints]
+  depends_on:
+    spark-master: {condition: service_started}
+    init-recursos: {condition: service_completed_successfully}
+    kafka-init: {condition: service_completed_successfully}
+
 services:
   # ---------------------------------------------------------------- Kafka (KRaft)
   kafka-1:
@@ -194,6 +211,7 @@ services:
               "--cores", "${SPARK_WORKER_CORES}", "--memory", "${SPARK_WORKER_MEMORY}",
               "--webui-port", "8081", "--work-dir", "/opt/spark/work"]
     ports: ["127.0.0.1:8081:8081"]
+    volumes: [checkpoints:/checkpoints]
     deploy:
       resources:
         limits: {cpus: "${SPARK_WORKER_CORES}", memory: "${SPARK_WORKER_LIMITE}"}
@@ -208,6 +226,7 @@ services:
               "--cores", "${SPARK_WORKER_CORES}", "--memory", "${SPARK_WORKER_MEMORY}",
               "--webui-port", "8081", "--work-dir", "/opt/spark/work"]
     ports: ["127.0.0.1:8082:8081"]
+    volumes: [checkpoints:/checkpoints]
     deploy:
       resources:
         limits: {cpus: "${SPARK_WORKER_CORES}", memory: "${SPARK_WORKER_LIMITE}"}
@@ -225,7 +244,54 @@ services:
       TRINO_URL: http://trino:8080
       METABASE_URL: http://metabase:3000
       MONGO_MIEMBROS: ${MONGO_MIEMBROS}
+      SNS_ENDPOINT: http://moto:5000
+    # datos/ para la carga del estado inicial (python -m breb.estado cargar)
+    volumes: ["../datos:/datos:ro"]
     command: ["bash"]
+
+  # ---------------------------------------------------------------- Jobs de streaming (fase 4)
+  # docker compose --profile streaming up -d   (antes: estado inicial en MongoDB, ver README)
+  # Cada job corre su driver en este contenedor (modo cliente) y sus ejecutores en los workers.
+  job1-bronze:
+    <<: *job
+    hostname: job1-bronze
+    command: ["spark-submit", "--master", "spark://spark-master:7077",
+              "--conf", "spark.driver.host=job1-bronze", "--conf", "spark.driver.bindAddress=0.0.0.0",
+              "--conf", "spark.cores.max=${JOB1_NUCLEOS}", "--conf", "spark.executor.cores=${JOB1_NUCLEOS}",
+              "--conf", "spark.executor.memory=512m", "--conf", "spark.sql.shuffle.partitions=${JOB1_NUCLEOS}",
+              "--driver-memory", "512m", "/opt/breb/jobs/job1_bronze.py"]
+    deploy:
+      resources:
+        limits: {cpus: "1.0", memory: 1g}
+
+  job2-riesgo:
+    <<: *job
+    hostname: job2-riesgo
+    depends_on:
+      spark-master: {condition: service_started}
+      init-recursos: {condition: service_completed_successfully}
+      kafka-init: {condition: service_completed_successfully}
+      mongo-init: {condition: service_completed_successfully}
+    command: ["spark-submit", "--master", "spark://spark-master:7077",
+              "--conf", "spark.driver.host=job2-riesgo", "--conf", "spark.driver.bindAddress=0.0.0.0",
+              "--conf", "spark.cores.max=${JOB2_NUCLEOS}", "--conf", "spark.executor.cores=${JOB2_NUCLEOS}",
+              "--conf", "spark.executor.memory=1g", "--conf", "spark.sql.shuffle.partitions=${JOB2_NUCLEOS}",
+              "--driver-memory", "1g", "/opt/breb/jobs/job2_riesgo.py"]
+    deploy:
+      resources:
+        limits: {cpus: "2.0", memory: 1792m}
+
+  job3-silver:
+    <<: *job
+    hostname: job3-silver
+    command: ["spark-submit", "--master", "spark://spark-master:7077",
+              "--conf", "spark.driver.host=job3-silver", "--conf", "spark.driver.bindAddress=0.0.0.0",
+              "--conf", "spark.cores.max=${JOB3_NUCLEOS}", "--conf", "spark.executor.cores=${JOB3_NUCLEOS}",
+              "--conf", "spark.executor.memory=768m", "--conf", "spark.sql.shuffle.partitions=${JOB3_NUCLEOS}",
+              "--driver-memory", "768m", "/opt/breb/jobs/job3_silver.py"]
+    deploy:
+      resources:
+        limits: {cpus: "1.0", memory: 1280m}
 
   # Productor de la demo (fase 3): docker compose run --rm productor {preparar|publicar} ...
   # Lee y escribe en la carpeta datos/ del repositorio (ignorada por git).
@@ -395,6 +461,7 @@ services:
         limits: {cpus: "0.5", memory: 256m}
 
 volumes:
+  checkpoints:
   kafka-1-datos:
   kafka-2-datos:
   kafka-3-datos:

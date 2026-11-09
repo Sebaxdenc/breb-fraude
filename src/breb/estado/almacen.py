@@ -80,10 +80,25 @@ class AlmacenMongo:
         return escritos
 
     def cargar_estado_inicial(self, motor: MotorVariables, batch_id: int = -1) -> int:
-        """Carga masiva del estado calculado sobre la historia (DAG bootstrap_state)."""
-        vacio = ({}, {}, {})
-        motor.tocadas = (set(motor.cuentas), set(motor.pares), set(motor.bancos))
-        return self.guardar(motor, vacio, batch_id)
+        """Carga masiva del estado calculado sobre la historia (DAG bootstrap_state).
+
+        Las colecciones deben estar vacías: se insertan los documentos por lotes, sin armar en memoria
+        una operación por documento (con LI-Small son unos 2,1 millones)."""
+        escritos = 0
+        for col, tabla in zip(self.cols, (motor.cuentas, motor.pares, motor.bancos)):
+            if col.estimated_document_count():
+                raise RuntimeError(f"la colección {col.name} ya tiene documentos: bórrenla antes de cargar el estado")
+            lote = []
+            for k, estado in tabla.items():
+                lote.append({"_id": k, "streaming": dict(estado, batch_id=batch_id), "streaming_prev": None})
+                if len(lote) == LOTE_ESCRITURA:
+                    col.insert_many(lote, ordered=False)
+                    escritos += len(lote)
+                    lote = []
+            if lote:
+                col.insert_many(lote, ordered=False)
+                escritos += len(lote)
+        return escritos
 
 
 class AlmacenMemoria:

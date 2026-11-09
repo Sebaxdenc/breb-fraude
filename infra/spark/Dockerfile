@@ -42,8 +42,12 @@ RUN pip install --no-cache-dir --no-deps /opt/breb && rm -rf /opt/breb/build /op
 COPY modelo/aml_xgb/ /opt/breb/modelo/aml_xgb/
 COPY infra/init/ /opt/breb/infra/init/
 COPY herramientas/infra/ /opt/breb/herramientas/infra/
+COPY herramientas/streaming/ /opt/breb/herramientas/streaming/
+COPY jobs/ /opt/breb/jobs/
 
-RUN useradd --uid 1000 --create-home spark && mkdir -p /opt/spark/work && chown -R spark /opt/spark
+# /checkpoints: volumen compartido entre los drivers de los jobs y los workers (checkpoints y estado de RocksDB)
+RUN useradd --uid 1000 --create-home spark && mkdir -p /opt/spark/work /checkpoints \
+ && chown -R spark /opt/spark /checkpoints
 USER spark
 WORKDIR /opt/breb
 ENTRYPOINT ["/usr/bin/tini", "--"]
