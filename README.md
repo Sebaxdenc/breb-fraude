@@ -141,6 +141,22 @@ docker compose run --rm spark-cliente spark-submit --master local[2] --driver-me
 ```
 Termina en `JOB 4 OK`, con los controles de calidad y la precisión y el recall de las alertas contra las etiquetas reales.
 
+### Consumo: Trino, permisos, linaje y tablero (fase 6)
+Después del Job 4, con los jobs de streaming apagados:
+```powershell
+docker compose --profile consumo up -d                                         # PostgreSQL, Hive Metastore, Trino y Metabase
+docker compose --profile consumo run --rm spark-cliente python -m breb.consumo registrar
+docker compose --profile consumo run --rm spark-cliente python -m breb.consumo permisos
+docker compose --profile consumo run --rm spark-cliente python -m breb.consumo linaje
+docker compose --profile consumo run --rm spark-cliente python -m breb.consumo tablero
+```
+- `registrar` registra en Trino las tablas de las tres capas (`lakehouse.bronze`, `lakehouse.silver` y `lakehouse.gold`) y muestra cuántas filas tiene cada una.
+- `permisos` comprueba las reglas de `infra/trino/etc/reglas.json`: `analista` y `metabase` solo leen Gold; `cumplimiento` lee las tres capas sin poder modificar nada.
+- `linaje` reconstruye, como `cumplimiento`, la alerta con mayor score desde Kafka hasta Gold y lo que hicieron las entidades (RNF-06). Con un `transaction_uuid` al final, reconstruye esa transacción.
+- `tablero` configura Metabase (administrador de `infra/credenciales/metabase-admin.env`), lo conecta a Trino y crea el tablero "Bre-B · detección de fraude". Imprime el enlace, p. ej. http://localhost:3000/dashboard/1.
+
+Para consultar a mano: `docker compose --profile consumo exec trino trino --user cumplimiento --catalog lakehouse`.
+
 ### Apagar
 `docker compose down` detiene todo y conserva los datos; `docker compose down -v` también borra los volúmenes.
 

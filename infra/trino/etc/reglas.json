@@ -1,0 +1,21 @@
+{
+  "catalogs": [
+    {"user": "breb_admin", "allow": "all"},
+    {"user": "cumplimiento|analista|metabase", "catalog": "lakehouse|system", "allow": "read-only"},
+    {"allow": "none"}
+  ],
+  "schemas": [
+    {"user": "breb_admin", "owner": true},
+    {"owner": false}
+  ],
+  "tables": [
+    {"user": "breb_admin", "privileges": ["SELECT", "INSERT", "DELETE", "UPDATE", "OWNERSHIP"]},
+    {"user": "cumplimiento", "catalog": "lakehouse", "schema": "bronze|silver|gold", "privileges": ["SELECT"]},
+    {"user": "analista|metabase", "catalog": "lakehouse", "schema": "gold", "privileges": ["SELECT"]},
+    {"user": "cumplimiento|analista|metabase", "catalog": "system", "privileges": ["SELECT"]}
+  ],
+  "procedures": [
+    {"user": "breb_admin", "catalog": "lakehouse", "schema": "system",
+     "procedure": "register_table|unregister_table|vacuum", "privileges": ["EXECUTE"]}
+  ]
+}

@@ -247,7 +247,7 @@ services:
       moto: {condition: service_started}
       kafka-1: {condition: service_healthy}
       mongo-1: {condition: service_healthy}
-    env_file: [credenciales/s3.env, credenciales/mongo-app.env]
+    env_file: [credenciales/s3.env, credenciales/mongo-app.env, credenciales/metabase-admin.env]
     environment:
       <<: *spark-env
       SPARK_MASTER_URL: spark://spark-master:7077
