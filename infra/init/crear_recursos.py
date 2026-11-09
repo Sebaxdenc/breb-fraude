@@ -60,8 +60,21 @@ def crear_tabla_delta():
     print(f"[init] tabla {TABLA_DELTA}: creada")
 
 
+def crear_cola_analistas():
+    """Cola de los analistas suscrita al tópico de alertas (en local reemplaza el correo, RF15). Se crea al
+    iniciar para que las alertas se acumulen aunque la bandeja todavía no esté abierta."""
+    if not os.environ.get("SNS_ENDPOINT"):
+        return
+    from breb.entidad.servicio import asegurar_analistas, clientes
+    sns, sqs = clientes()
+    esperar("moto", lambda: sns.list_topics())
+    asegurar_analistas(sns, sqs)
+    print("[init] tópico fraud-alerts-critical y cola breb-analistas-fraude listos")
+
+
 if __name__ == "__main__":
     crear_buckets()
     crear_tabla_delta()
+    crear_cola_analistas()
     print("[init] recursos listos")
     sys.exit(0)

@@ -11,11 +11,20 @@ Plan para construir la arquitectura del Entregable 1 v2.0 (`documento/Entregable
 | 1. Modelo dentro del Job 2 | S13 | 10 de 10 |
 | 2. Infraestructura local | S13 | 16 de 17 |
 | 3. Ingesta | S13–S14 | 7 de 7 |
-| 4. Streaming | S14 | 11 de 12 |
+| 4. Streaming | S14 | 12 de 13 |
 | 5. Batch y orquestación | S15 | 0 de 6 |
-| 6. Consumo y gobernanza | S15 | 0 de 6 |
-| 7. Pruebas y endurecimiento | S16 | 0 de 6 |
+| 6. Consumo y gobernanza | S15 | 2 de 7 |
+| 7. Pruebas y endurecimiento | S16 | 1 de 8 |
 | 8. Documento y sustentación | S16 | 0 de 6 |
+
+## Camino a la demo de punta a punta
+Prioridad del equipo: mostrar el flujo completo funcionando. La latencia (D6) queda pospuesta.
+1. Alertas a las entidades y a los analistas: SNS → SQS → servicio de retención → MongoDB (fase 6)
+2. Tramo de la demo con alertas: puntuación fuera de línea del test y estado hasta ese punto
+3. Gold: Job 4 con el modelo en estrella y las etiquetas (fase 5)
+4. Trino con las tablas registradas y tablero de Metabase (fase 6)
+5. Airflow 3 con los tres DAG (fases 2 y 5)
+6. Guion de la demo con perfiles escalonados para que quepa en 11,7 GB de WSL (D5)
 
 ---
 
@@ -86,7 +95,8 @@ Criterio del hito S14: un evento llega a Bronze, Silver y MongoDB; el Job 2 publ
 - [x] Sin Docker, con datos sintéticos y Spark local, a 200 ev/s: Bronze, Silver y `risk_decisions` completos; 7.920 de 7.920 transacciones con variables y score idénticos al notebook; ventanas y métricas escritas. **La latencia no cumplió** (p99 de 12,9 s): en ese entorno, escribir en `risk_decisions` tardaba de 1,5 a 8 s por micro-batch
 - [x] Primera corrida en Docker con LI-Small real (100, 250 y 500 ev/s, [#13](https://github.com/Sebaxdenc/breb-fraude/pull/13)): estado inicial de 2.095.854 documentos cargado en 4,4 min; Bronze 50.998 de 50.998 y Silver 50.998 sin duplicados; **paridad en línea: 20.000 de 20.000 transacciones con variables y score idénticos al notebook**. **La latencia no cumplió**: p99 de 285 s. Los micro-batches del Job 2 crecieron hasta 29.549 transacciones y tardaron hasta 166 s; cada uno pasó de 6 a 19 s escribiendo en `risk_decisions` y hasta 107 s entre MongoDB, variables y modelo, sin desglose
 - [x] Cambios para la latencia (D6): `risk_decisions` sale del camino de la decisión (archivo por micro-batch y consulta aparte que hace un commit cada 10 s); las ventanas del RF3 pasan a su propia aplicación (`job2-ventanas`); Delta reconstruye el estado de la tabla con 4 tareas en vez de 50; Kafka y MongoDB con hasta 2 CPU; el Job 2 imprime el tiempo de cada tramo (lectura de Kafka, lectura de MongoDB, variables, modelo, escritura en MongoDB, SNS, archivo)
-- [ ] En Docker en el equipo de la demo: `verificar_fase4.py` con **FASE 4 OK** y la latencia por escalón
+- [x] Segunda corrida en Docker ([#14](https://github.com/Sebaxdenc/breb-fraude/pull/14)): Bronze, Silver y `risk_decisions` con 71.910 de 71.910, sin duplicados; paridad de 20.000 de 20.000; ventanas en 35.258 cuentas. Latencia: p99 de 99 s a 250 ev/s (antes 285 s)
+- [ ] Latencia del RNF-02 en Docker (pospuesta, ver D6)
 
 ## Fase 5 · Batch y orquestación (S15)
 - [ ] Job 4: Gold en estrella (`Fact_Transferencias`, `Dim_Cuenta` SCD 2, `Dim_Entidad_Financiera`, `Dim_Canal`, `Dim_Tiempo`) con MERGE (RF7)
@@ -97,14 +107,17 @@ Criterio del hito S14: un evento llega a Bronze, Silver y MongoDB; el Job 2 publ
 - [ ] Los tres DAG en verde de punta a punta
 
 ## Fase 6 · Consumo y gobernanza (S15)
-- [ ] SNS y SQS en moto: tópico `fraud-alerts-critical`, una cola por entidad y suscripción de los analistas (RF15)
-- [ ] Servicio de la entidad: lee su cola SQS, descarta `transaction_uuid` repetidos y escribe `estado_retencion` en MongoDB
+- [x] SNS y SQS en moto: tópico `fraud-alerts-critical`, cola `breb-entidad-<id>` por entidad con filtro por el atributo `entidades` (origen y destino), y cola `breb-analistas-fraude` sin filtro en lugar del correo (RF15)
+- [x] Servicio de la entidad (`python -m breb.entidad --entidades 70,12`): retiene fondos en la cuenta destino o bloquea la ordenante, lo registra en `estado_retencion` y descarta las reentregas por `transaction_uuid`; bandeja de los analistas con `--analistas`. Probado sin Docker con moto y MongoDB
+- [ ] El Job 2 usa `estado_retencion` en las evaluaciones siguientes (sección 1.4)
 - [ ] Hive Metastore y Trino con el conector de Delta; tablas de las tres capas registradas (RF11)
 - [ ] Reglas de acceso de Trino: analistas solo Gold, cumplimiento las tres capas en solo lectura
 - [ ] Metabase: tableros de las cuatro preguntas de la sección 1.3, más alertas y latencia
 - [ ] Linaje: reconstruir una transacción por `transaction_uuid` en las tres capas en menos de 5 min (RNF-06)
 
 ## Fase 7 · Pruebas y endurecimiento (S16)
+- [x] Tramo de la demo (`python -m breb.estado tramo`): puntúa todo el test con el motor del Job 2, compara PR-AUC, verdaderos y falsos positivos con el notebook, y elige las N transacciones consecutivas con más alertas. `cargar --desde-seq` deja el estado justo antes de ese tramo. Con los datos sintéticos, el PR-AUC salió idéntico al del notebook
+- [ ] Tramo de la demo con LI-Small real: PR-AUC del test completo igual a 0,2674 y corrida de punta a punta con alertas
 - [ ] Prueba de carga por escalones en el equipo de la demo; declarar la tasa con 30 % de margen (RNF-01, RNF-02)
 - [ ] Falla de un bróker durante la carga (RNF-01, RNF-03)
 - [ ] Falla de un ejecutor de Spark (RNF-05)
@@ -125,7 +138,7 @@ Criterio del hito S14: un evento llega a Bronze, Silver y MongoDB; el Job 2 publ
 ## Decisiones pendientes
 | # | Decisión | Opciones | Hito |
 |---|---|---|---|
-| D6 | Latencia del Job 2 (RNF-02) | Primera corrida en Docker: p99 de 285 s. Se aplicaron los cambios de la fase 4 (#14). Si con ellos el p99 sigue por encima de 3 s, el desglose por tramo dice qué sigue: validar el contrato con expresiones de Spark en vez de Python, o bajar la tasa declarada de la demo (RNF-01) | S14 |
+| D6 | Latencia del Job 2 (RNF-02) · **pospuesta** | Segunda corrida: p99 de 99 s. En micro-batches de 1.400 a 4.800 transacciones, variables y modelo tardan menos de 0,5 s; el tiempo se va en leer Kafka con la validación en Python (de 2,7 a 62 s) y en MongoDB (de 0,9 a 6,9 s para leer y de 2,5 a 12,4 s para escribir). Ideas, en orden: (1) validar el contrato con expresiones de Spark en lugar de la pandas UDF con jsonschema, en los Jobs 1 y 2; (2) MongoDB con 2 GB de caché, escribir solo los campos que cambian en vez de `streaming` y `streaming_prev` completos, y revisar con `mongostat` si el cuello es el disco de WSL; (3) triggers de 60 s para los Jobs 1 y 3 durante la demo; (4) declarar una tasa de demo más baja o medir en Linux nativo con más núcleos | S16 |
 | D4 | Estado inicial en el equipo de 16 GB | Calcularlo en Python pide unos 5,5 GB, que no caben junto al stack completo. Opciones: calcularlo en Kaggle y exportar los documentos (unos 390 MB sin comprimir) para que el DAG `bootstrap_state` solo los cargue; correr el DAG con el resto del stack apagado; o bajar la memoria de `cargar` y `procesar` (tipos categóricos, sin guardar las variables crudas) | S15 |
 | D5 | Perfiles para la demo | Propuesta: la demo de punta a punta corre `dev` + `consumo` (y Airflow); las pruebas de falla corren `completo` sin `consumo`. Juntos, los topes de memoria suman 16,7 GiB frente a 11,68 GiB de WSL; `dev` + `consumo` usaron 4,03 GiB en reposo. Se decide con la RAM medida en la fase 7 | S16 |
 

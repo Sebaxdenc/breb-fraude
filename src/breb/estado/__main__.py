@@ -1,7 +1,10 @@
-"""python -m breb.estado cargar: calcula el estado inicial con la historia de LI-Small y lo carga en MongoDB.
+"""python -m breb.estado {tramo|cargar}
 
-Es lo que hará el DAG bootstrap_state (fase 5). Se corre una vez antes de arrancar el Job 2 y de publicar.
-Necesita unos 5,5 GB de RAM (decisión D4).
+- tramo: puntúa todo el test fuera de línea, compara las métricas con las del notebook y elige el tramo de N
+  transacciones con más alertas para la demo (datos/productor/tramo_demo.json y scores_test.parquet).
+- cargar: calcula el estado inicial y lo carga en MongoDB. Es lo que hará el DAG bootstrap_state (fase 5).
+  Con --desde-seq, el estado incluye también el test hasta ese seq.
+Cada uno necesita unos 5,5 GB de RAM (decisión D4).
 """
 import argparse
 import gc
@@ -13,6 +16,7 @@ import time
 from pymongo import MongoClient
 
 from breb.estado.almacen import COLECCIONES, AlmacenMongo
+from breb.estado import tramo as tr
 from breb.estado.inicial import calcular
 
 
@@ -23,7 +27,26 @@ def main() -> int:
     c.add_argument("--csv", default=os.path.join(os.environ.get("BREB_DATOS", "/datos"), "LI-Small_Trans.csv"))
     c.add_argument("--modelo", default=os.environ.get("BREB_DIR_MODELO", "/opt/breb/modelo/aml_xgb"))
     c.add_argument("--reemplazar", action="store_true", help="borra cuentas, pares y bancos antes de cargar")
+    c.add_argument("--desde-seq", type=int, help="estado hasta este seq (tramo de la demo)")
+    t = sub.add_parser("tramo", help="puntúa el test completo y elige el tramo de la demo")
+    t.add_argument("--csv", default=os.path.join(os.environ.get("BREB_DATOS", "/datos"), "LI-Small_Trans.csv"))
+    t.add_argument("--modelo", default=os.environ.get("BREB_DIR_MODELO", "/opt/breb/modelo/aml_xgb"))
+    t.add_argument("--transacciones", type=int, default=15_000, help="tamaño del tramo (50 ev/s durante 5 min)")
+    t.add_argument("--salida", default=os.path.join(os.environ.get("BREB_DATOS", "/datos"), "productor"))
     a = ap.parse_args()
+
+    if a.orden == "tramo":
+        scores, metricas = tr.puntuar_test(a.csv, a.modelo)
+        tramo = tr.elegir_tramo(scores, metricas["umbral"], a.transacciones)
+        tr.guardar(scores, metricas, tramo, a.salida)
+        print("métricas del test completo con el motor del Job 2:")
+        print(json.dumps(metricas, indent=2, ensure_ascii=False))
+        print("tramo de la demo:")
+        print(json.dumps(tramo, indent=2, ensure_ascii=False))
+        igual = metricas["pr_auc_notebook"] is not None and abs(metricas["pr_auc"] - metricas["pr_auc_notebook"]) < 1e-9
+        print("PR-AUC igual al del notebook" if igual else "PR-AUC DISTINTO al del notebook: revisar")
+        print(f"siguiente paso: python -m breb.estado cargar --reemplazar --desde-seq {tramo['desde_seq']}")
+        return 0 if igual else 1
 
     cliente = MongoClient(f"mongodb://{os.environ['MONGO_MIEMBROS']}/?replicaSet=rs0&authSource=admin",
                           username=os.environ["MONGO_APP_USUARIO"], password=os.environ["MONGO_APP_CLAVE"],
@@ -37,7 +60,7 @@ def main() -> int:
     for n in ocupadas:
         db[n].drop()
 
-    motor, resumen = calcular(a.csv, a.modelo)
+    motor, resumen = calcular(a.csv, a.modelo, a.desde_seq)
     print(json.dumps(resumen, ensure_ascii=False), flush=True)
     gc.collect()
     t0 = time.perf_counter()
