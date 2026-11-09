@@ -19,10 +19,12 @@ Proyecto final de ST1630 Sistemas Intensivos en Datos (EAFIT, 2026-2). Implement
 | `herramientas/referencia/` | Dataset sintético y ejecución del notebook original para la prueba de paridad |
 | `herramientas/kaggle/` | Notebooks para Kaggle: verificación de paridad con datos reales y demo del modelo |
 | `infra/` | Stack local: `docker-compose.yml`, imagen de Spark, inicialización de Kafka, MongoDB, S3 y DynamoDB |
+| `src/breb/streaming/`, `jobs/` | Jobs 1, 2 y 3 de Spark Structured Streaming |
 | `herramientas/infra/` | Verificación del stack y prueba de Delta Lake sobre el S3 local |
+| `herramientas/streaming/` | Verificación de la fase 4 |
 | `tests/` | Pruebas (paridad, Job 2 con MongoDB, contratos) |
 
-Pendiente según el plan: `jobs/` (Spark), `dags/` (Airflow), `servicios/` (servicio de la entidad).
+Pendiente según el plan: `dags/` (Airflow) y `servicios/` (servicio de la entidad).
 
 ## Entorno de desarrollo
 La versión de Python y de las librerías es la de la imagen de Spark: PySpark 3.5 admite hasta Python 3.11 y exige numpy < 2.
@@ -96,6 +98,19 @@ Opciones de `publicar`:
 - `--max` limita la cantidad de transacciones.
 
 Al final imprime, por escalón, la tasa lograda y la latencia fuente → Kafka (p50 y p99, RF1: p99 < 300 ms), y guarda el informe en `datos/mediciones/`. Después de `docker compose down -v`, el tópico queda vacío: la siguiente corrida va sin `--continuar`.
+
+### Streaming (fase 4)
+Los Jobs 1, 2 y 3 corren en el perfil `streaming`. El Job 2 necesita el estado de MongoDB al corte de validación, así que se reproduce desde cero:
+```powershell
+docker compose down -v                                             # tópico, MongoDB y lakehouse vacíos
+docker compose build
+docker compose up -d
+docker compose run --rm spark-cliente python -m breb.estado cargar  # unos 5,5 GB de RAM y de 3 a 5 minutos
+docker compose --profile streaming up -d                           # job1-bronze, job2-riesgo y job3-silver
+docker compose run --rm productor publicar --escalones "100:60,250:60,500:60"
+docker compose run --rm spark-cliente spark-submit /opt/breb/herramientas/streaming/verificar_fase4.py --esperar 600
+```
+`verificar_fase4.py` compara Kafka, Bronze, Silver, `risk_decisions` y MongoDB. También mide la paridad en línea con el notebook y la latencia del RNF-02, total y por minuto de publicación. Termina en `FASE 4 OK`. Cada micro-batch del Job 2 imprime cuánto tardó cada tramo: `docker compose logs job2-riesgo | Select-String "batch"`.
 
 ### Apagar
 `docker compose down` detiene todo y conserva los datos; `docker compose down -v` también borra los volúmenes.

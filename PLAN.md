@@ -9,9 +9,9 @@ Plan para construir la arquitectura del Entregable 1 v2.0 (`documento/Entregable
 |---|---|---|
 | 0. Repositorio y contratos | S13 | 8 de 10 |
 | 1. Modelo dentro del Job 2 | S13 | 10 de 10 |
-| 2. Infraestructura local | S13 | 15 de 17 |
-| 3. Ingesta | S13–S14 | 6 de 7 |
-| 4. Streaming | S14 | 0 de 8 |
+| 2. Infraestructura local | S13 | 16 de 17 |
+| 3. Ingesta | S13–S14 | 7 de 7 |
+| 4. Streaming | S14 | 9 de 11 |
 | 5. Batch y orquestación | S15 | 0 de 6 |
 | 6. Consumo y gobernanza | S15 | 0 de 6 |
 | 7. Pruebas y endurecimiento | S16 | 0 de 6 |
@@ -57,7 +57,7 @@ Criterio del hito S13: `docker compose up` levanta todo con el perfil de desarro
 - [x] Inicialización del replica set (`infra/mongo/iniciar_replica.js`): `electionTimeoutMillis=2000`, keyFile, usuario root y usuario `breb_app` con readWrite solo sobre `breb`; probado con 1 y 3 miembros, y es idempotente
 - [x] Buckets `lakehouse-bronze`, `lakehouse-silver`, `lakehouse-gold` y tabla `delta_log` en DynamoDB Local (`infra/init/crear_recursos.py`)
 - [x] Límites de CPU y memoria por servicio
-- [ ] `spark.cores.max` por aplicación (se fija al crear cada job, fase 4)
+- [x] `spark.cores.max` por aplicación: `JOB1_NUCLEOS`, `JOB2_NUCLEOS` y `JOB3_NUCLEOS` en `infra/.env` (1, 2 y 1)
 - [x] Perfil `dev` en Docker en el equipo de la demo (Windows 11, WSL 2): los tres servicios de inicio terminan en `Exited (0)`, `verificar_stack.py` da **STACK OK** y `prueba_delta_s3.py` da **PRUEBA DELTA OK** en 182 s. En reposo, los 7 contenedores usan 1,04 GiB ([#7](https://github.com/Sebaxdenc/breb-fraude/pull/7), [#8](https://github.com/Sebaxdenc/breb-fraude/pull/8))
 - [x] Perfil `completo` en Docker en el equipo de la demo: 3 brókers, replica set de 3 y 2 workers sanos; **STACK OK** y **PRUEBA DELTA OK** en 222 s
 - [x] RAM del perfil `completo` con la prueba de Delta corriendo: 4,59 GiB en total (Kafka 1,02, MongoDB 0,42, workers 1,62, driver 1,06 y el resto 0,46) sobre 11,68 GiB de WSL (riesgo R5). Falta medirla con los Jobs 1 a 3 en la fase 7
@@ -71,18 +71,21 @@ Decisión D3: el productor publica directo en Kafka, sin API de ingesta.
 - [x] `python -m breb.productor publicar`: reproduce en orden de `seq` por escalones (por defecto 100, 250, 500, 750 y 1.000 ev/s, 60 s cada uno), con clave `source_account`, `acks=all`, idempotencia, fracción opcional de inválidos y `--continuar` desde el último `seq` publicado
 - [x] Medición fuente → Kafka (RF1): de `produced_at` a la hora de escritura en el bróker (LogAppendTime), con p50, p95 y p99 por escalón e informe JSON en `datos/mediciones/`. Sin Docker, con datos sintéticos: p99 de 6 a 7 ms entre 200 y 2.000 ev/s; el tópico tiene todos los mensajes, en orden de `seq` por partición y sin duplicados
 - [x] Imagen y servicio `productor` (`infra/productor/`, perfil `herramientas`), sin Spark
-- [ ] En Docker en el equipo de la demo con LI-Small real: `preparar` y los cinco escalones con p99 < 300 ms (RF1)
+- [x] En Docker en el equipo de la demo con LI-Small real: `preparar` dejó 1.038.880 transacciones a reproducir (617 de lavado) en 72 s; los cinco escalones lograron la tasa pedida sin errores, con p50 de 5 a 6 ms y p99 de 49 a 235 ms (RF1: p99 < 300 ms)
 
 ## Fase 4 · Streaming (S14)
 Criterio del hito S14: un evento llega a Bronze, Silver y MongoDB; el Job 2 publica alertas; p99 < 3 s.
-- [ ] Job 1: Kafka → validación → Bronze con `is_valid`, `validation_errors`, `raw_payload` y metadatos de Kafka; trigger de 30 s (RF2, RF5)
-- [ ] Job 2: Kafka → validación → `dropDuplicatesWithinWatermark` → ventanas del RF3 (5 y 10 min, modo update) → `foreachBatch` que llama a `procesar_microbatch` → MongoDB, SNS y `risk_decisions` con `txnAppId`/`txnVersion` (RF3, RF4, RF10, RF13, RF14)
-- [ ] Trigger de 1 s, RocksDB como state store y `spark.sql.shuffle.partitions` igual a los núcleos (ADR 02)
-- [ ] `StreamingQueryListener` → tabla de métricas (duración del micro-batch, filas por segundo, `maxOffsetsBehindLatest`)
-- [ ] Latencia por evento: `decision_ts − kafka_ts` guardada en la tabla de métricas (RNF-02)
-- [ ] Job 3: Bronze válidos → Silver, deduplicado con watermark de 10 min y MERGE por `transaction_uuid` (RF6)
-- [ ] Delta en modo multi-cluster con `S3DynamoDBLogStore` (RNF-05, riesgo R9)
-- [ ] Paridad en línea: comparar las variables guardadas en `risk_decisions` con `golden_sample.parquet` (decisión D2)
+- [x] Carga del estado inicial en MongoDB: `python -m breb.estado cargar` (lo que hará el DAG `bootstrap_state`)
+- [x] Job 1 (`src/breb/streaming/job1_bronze.py`): Kafka → validación del contrato → Bronze append-only con `raw_payload`, `is_valid`, `validation_errors` y coordenadas de Kafka, particionado por fecha de ingesta; trigger de 30 s (RF2, RF5)
+- [x] Job 2 (`src/breb/streaming/job2_riesgo.py`): Kafka → validación → `dropDuplicatesWithinWatermark` → `foreachBatch` con `procesar_microbatch` → MongoDB, SNS (moto) y `risk_decisions` con `txnAppId`/`txnVersion`, `decision_ts` y `latencia_ms`; trigger de 1 s (RF4, RF10, RF13, RF14)
+- [x] Ventanas del RF3 en el Job 2: 5 min por ordenante y 10 min por receptora, salto de 1 min, modo update y watermark de 2 min; la ventana más reciente queda en `cuentas.ventanas` de MongoDB. Planificador FAIR para que no le quiten núcleos a las decisiones
+- [x] RocksDB como state store y `spark.sql.shuffle.partitions` igual a los núcleos de cada job (ADR 02)
+- [x] `StreamingQueryListener` → tabla Delta de métricas `lakehouse-gold/metricas/progreso_streaming` (duración, filas por segundo, `maxOffsetsBehindLatest`, estado)
+- [x] Job 3 (`src/breb/streaming/job3_silver.py`): Bronze válidos → Silver en UTC, sin duplicados, con MERGE por `transaction_uuid` que solo inserta (RF6). Sin `dropDuplicatesWithinWatermark`: la reproducción comprime el tiempo unas 155 veces y descartaría eventos de una partición demorada
+- [x] `herramientas/streaming/verificar_fase4.py`: Kafka = Bronze, Silver y `risk_decisions` sin duplicados, paridad en línea contra el notebook, latencia del RNF-02 (total y por minuto), ventanas en MongoDB y tabla de métricas
+- [x] Sin Docker, con datos sintéticos y Spark local, a 200 ev/s: Bronze, Silver y `risk_decisions` completos; 7.920 de 7.920 transacciones con variables y score idénticos al notebook; ventanas y métricas escritas. **La latencia no cumplió** (p99 de 12,9 s): en ese entorno, escribir en `risk_decisions` tardaba de 1,5 a 8 s por micro-batch
+- [ ] En Docker en el equipo de la demo con LI-Small real: `verificar_fase4.py` con **FASE 4 OK** y la latencia por escalón
+- [ ] Si la latencia no cumple en Docker: medir cada tramo del micro-batch (el Job 2 lo imprime) y ajustar (D6)
 
 ## Fase 5 · Batch y orquestación (S15)
 - [ ] Job 4: Gold en estrella (`Fact_Transferencias`, `Dim_Cuenta` SCD 2, `Dim_Entidad_Financiera`, `Dim_Canal`, `Dim_Tiempo`) con MERGE (RF7)
@@ -121,7 +124,8 @@ Criterio del hito S14: un evento llega a Bronze, Silver y MongoDB; el Job 2 publ
 ## Decisiones pendientes
 | # | Decisión | Opciones | Hito |
 |---|---|---|---|
-| D2 | Particiones del tópico frente al orden de las variables | Con varias particiones, dos eventos muy cercanos pueden caer en micro-batches distintos y procesarse en otro orden, lo que cambia un poco los acumulados (sobre todo los de banco). Medirlo con la paridad en línea; si la diferencia afecta decisiones, usar 1 partición para la demo | S14 |
+| D2 | Particiones del tópico frente al orden de las variables | Sin Docker: con `maxOffsetsPerTrigger` de 5.000, 226 de 9.204 transacciones tuvieron variables distintas (sobre todo `from_bank_freq` y `to_bank_freq`), con las mismas decisiones; sin tope, 0 de 7.920. El Job 2 queda sin tope por defecto. Falta confirmarlo con LI-Small real en Docker; si hay diferencias que cambien decisiones, usar 1 partición para la demo | S14 |
+| D6 | Latencia del Job 2 (RNF-02) | Sin Docker, la escritura en `risk_decisions` (Delta en SeaweedFS) dominó el micro-batch. Si en Docker el p99 pasa de 3 s: escribir `risk_decisions` cada N micro-batches o en una consulta aparte, y declarar la tasa con la que sí se cumple (RNF-01) | S14 |
 | D4 | Estado inicial en el equipo de 16 GB | Calcularlo en Python pide unos 5,5 GB, que no caben junto al stack completo. Opciones: calcularlo en Kaggle y exportar los documentos (unos 390 MB sin comprimir) para que el DAG `bootstrap_state` solo los cargue; correr el DAG con el resto del stack apagado; o bajar la memoria de `cargar` y `procesar` (tipos categóricos, sin guardar las variables crudas) | S15 |
 | D5 | Perfiles para la demo | Propuesta: la demo de punta a punta corre `dev` + `consumo` (y Airflow); las pruebas de falla corren `completo` sin `consumo`. Juntos, los topes de memoria suman 16,7 GiB frente a 11,68 GiB de WSL; `dev` + `consumo` usaron 4,03 GiB en reposo. Se decide con la RAM medida en la fase 7 | S16 |
 
