@@ -12,17 +12,17 @@ Plan para construir la arquitectura del Entregable 1 v2.0 (`documento/Entregable
 | 2. Infraestructura local | S13 | 16 de 17 |
 | 3. Ingesta | S13–S14 | 7 de 7 |
 | 4. Streaming | S14 | 12 de 13 |
-| 5. Batch y orquestación | S15 | 2 de 7 |
-| 6. Consumo y gobernanza | S15 | 2 de 7 |
+| 5. Batch y orquestación | S15 | 3 de 7 |
+| 6. Consumo y gobernanza | S15 | 6 de 8 |
 | 7. Pruebas y endurecimiento | S16 | 3 de 9 |
 | 8. Documento y sustentación | S16 | 0 de 6 |
 
 ## Camino a la demo de punta a punta
 Prioridad del equipo: mostrar el flujo completo funcionando. La latencia (D6) queda pospuesta.
-1. Alertas a las entidades y a los analistas: SNS → SQS → servicio de retención → MongoDB (fase 6)
-2. Tramo de la demo con alertas: puntuación fuera de línea del test y estado hasta ese punto
-3. Gold: Job 4 con el modelo en estrella y las etiquetas (fase 5)
-4. Trino con las tablas registradas y tablero de Metabase (fase 6)
+1. Alertas a las entidades y a los analistas: SNS → SQS → servicio de retención → MongoDB (fase 6) · hecho
+2. Tramo de la demo con alertas: puntuación fuera de línea del test y estado hasta ese punto · hecho
+3. Gold: Job 4 con el modelo en estrella y las etiquetas (fase 5) · hecho
+4. Trino con las tablas registradas, permisos, linaje y tablero de Metabase (fase 6) · probado sin Docker
 5. Airflow 3 con los tres DAG (fases 2 y 5)
 6. Guion de la demo con perfiles escalonados para que quepa en 11,7 GB de WSL (D5)
 
@@ -100,7 +100,7 @@ Criterio del hito S14: un evento llega a Bronze, Silver y MongoDB; el Job 2 publ
 
 ## Fase 5 · Batch y orquestación (S15)
 - [x] Job 4 (`src/breb/batch/job4_gold.py`): `fact_transferencias`, `dim_cuenta` (SCD 2 sobre entidad y nivel de riesgo), `dim_entidad_financiera`, `dim_canal` y `dim_tiempo` en `lakehouse-gold/analytics/`, incremental con MERGE e idempotente; completa las decisiones que llegan tarde. Probado sin Docker con Spark local (RF7)
-- [ ] Job 4 en Docker con el tramo de la demo
+- [x] Job 4 en Docker con el tramo de la demo: **JOB 4 OK** en 65 s; 15.000 hechos, 13.935 cuentas, etiquetas de las 1.038.880 transacciones del test; 25 alertas con 13 verdaderos positivos, 12 falsos positivos y 12 falsos negativos (precisión 0,52, recall 0,52) ([#17](https://github.com/Sebaxdenc/breb-fraude/pull/17))
 - [x] Carga de las etiquetas `Is Laundering` a Gold (`etiquetas`) y controles de calidad en el Job 4: Silver completo en los hechos, claves no nulas, integridad con `dim_tiempo`, una versión vigente por cuenta, y precisión y recall de las alertas; cada ejecución queda en `ejecuciones`
 - [ ] DAG `breb_lakehouse_pipeline` cada 15 min: sensores → dimensiones → hechos → calidad → sincronización a MongoDB → OPTIMIZE y VACUUM (RF9)
 - [ ] DAG `reprocess_quarantine` bajo demanda (RF12)
@@ -111,10 +111,11 @@ Criterio del hito S14: un evento llega a Bronze, Silver y MongoDB; el Job 2 publ
 - [x] SNS y SQS en moto: tópico `fraud-alerts-critical`, cola `breb-entidad-<id>` por entidad con filtro por el atributo `entidades` (origen y destino), y cola `breb-analistas-fraude` sin filtro en lugar del correo (RF15)
 - [x] Servicio de la entidad (`python -m breb.entidad --entidades 70,12`): retiene fondos en la cuenta destino o bloquea la ordenante, lo registra en `estado_retencion` y descarta las reentregas por `transaction_uuid`; bandeja de los analistas con `--analistas`. Probado sin Docker con moto y MongoDB
 - [ ] El Job 2 usa `estado_retencion` en las evaluaciones siguientes (sección 1.4)
-- [ ] Hive Metastore y Trino con el conector de Delta; tablas de las tres capas registradas (RF11)
-- [ ] Reglas de acceso de Trino: analistas solo Gold, cumplimiento las tres capas en solo lectura
-- [ ] Metabase: tableros de las cuatro preguntas de la sección 1.3, más alertas y latencia
-- [ ] Linaje: reconstruir una transacción por `transaction_uuid` en las tres capas en menos de 5 min (RNF-06)
+- [x] Tablas de las tres capas registradas en el Hive Metastore por Trino (`python -m breb.consumo registrar`): `lakehouse.bronze.transacciones`, `lakehouse.silver.transacciones` y en `lakehouse.gold` las 9 de Gold, `risk_decisions` y `progreso_streaming`; idempotente (RF11)
+- [x] Reglas de acceso de Trino (`infra/trino/etc/reglas.json`): `breb_admin` registra tablas; `cumplimiento` lee las tres capas; `analista` y `metabase` solo Gold; cualquier otro usuario, nada. `python -m breb.consumo permisos` comprueba 10 casos
+- [x] Tablero de Metabase creado por la API (`python -m breb.consumo tablero`): las cuatro preguntas de la sección 1.3 (en 5 preguntas), alertas emitidas, desempeño frente a las etiquetas, latencia por minuto y salud del streaming
+- [x] Linaje (`python -m breb.consumo linaje [uuid]`), como `cumplimiento`: Bronze con coordenadas de Kafka, Silver, decisión, hechos con nivel de riesgo de las cuentas y acciones de las entidades en MongoDB; 1,1 s (RNF-06)
+- [ ] Capa de consumo en Docker con el tramo: registrar, permisos, linaje y tablero
 
 ## Fase 7 · Pruebas y endurecimiento (S16)
 - [x] Tramo de la demo (`python -m breb.estado tramo`): puntúa todo el test con el motor del Job 2, compara PR-AUC, verdaderos y falsos positivos con el notebook, y elige las N transacciones consecutivas con más alertas. `cargar --desde-seq` deja el estado justo antes de ese tramo. Con los datos sintéticos, el PR-AUC salió idéntico al del notebook

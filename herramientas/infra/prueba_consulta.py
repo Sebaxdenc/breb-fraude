@@ -25,7 +25,7 @@ import boto3
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 
-USUARIO = "breb_prueba"
+USUARIO = "breb_admin"   # infra/trino/etc/reglas.json: el único que registra tablas
 
 
 def trino(sql: str) -> list:
