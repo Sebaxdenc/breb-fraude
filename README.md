@@ -126,7 +126,7 @@ docker compose --profile streaming up -d
 ```
 En otras dos ventanas de PowerShell (dentro de `infra`), los consumidores de las alertas:
 ```powershell
-docker compose run --rm entidad --tramo        # las 5 entidades con más alertas del tramo
+docker compose run --rm entidad --tramo        # todas las entidades que participan en alertas del tramo
 docker compose run --rm entidad --analistas    # todas las alertas
 ```
 Y en la primera, después de un minuto:

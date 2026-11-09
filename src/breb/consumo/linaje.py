@@ -1,6 +1,7 @@
 """Linaje de una transacción (RNF-06): el oficial de cumplimiento la reconstruye con SQL desde el evento en Kafka
 hasta Gold, su decisión y lo que hizo la entidad, consultando como el usuario `cumplimiento` (solo lectura en las
-tres capas). Sin transaction_uuid, toma la alerta con el score más alto.
+tres capas). Sin transaction_uuid, toma la alerta con el score más alto entre las que procesó alguna entidad (o, si
+ninguna, la de score más alto).
 """
 from __future__ import annotations
 
@@ -32,21 +33,39 @@ PASOS = [
 
 
 def alerta_principal() -> str:
-    _, filas = consulta("SELECT transaction_uuid FROM lakehouse.gold.risk_decisions WHERE decision = 'alerta' "
-                        "ORDER BY risk_score DESC LIMIT 1", usuario=USUARIO)
+    procesadas = uuids_procesados()
+    filtro = ""
+    if procesadas:
+        filtro = " AND transaction_uuid IN (" + ", ".join(f"'{u}'" for u in procesadas[:500]) + ")"
+    _, filas = consulta("SELECT transaction_uuid FROM lakehouse.gold.risk_decisions WHERE decision = 'alerta'"
+                        f"{filtro} ORDER BY risk_score DESC LIMIT 1", usuario=USUARIO)
     if not filas:
         raise SystemExit("risk_decisions no tiene alertas todavía")
     return filas[0][0]
 
 
+def _mongo():
+    if not os.environ.get("MONGO_MIEMBROS"):
+        return None
+    from pymongo import MongoClient
+    return MongoClient(f"mongodb://{os.environ['MONGO_MIEMBROS']}/?replicaSet=rs0&authSource=admin",
+                       username=os.environ["MONGO_APP_USUARIO"], password=os.environ["MONGO_APP_CLAVE"],
+                       serverSelectionTimeoutMS=5000)["breb"]
+
+
+def uuids_procesados() -> list[str]:
+    try:
+        db = _mongo()
+        return sorted({d["transaction_uuid"] for d in db.alertas_recibidas.find({}, {"transaction_uuid": 1})}) if db else []
+    except Exception:  # noqa: BLE001 - MongoDB es opcional para el linaje
+        return []
+
+
 def acciones_de_entidades(uuid: str) -> list[list]:
     """Lo que hicieron las entidades con la alerta (MongoDB, colección alertas_recibidas)."""
-    if not os.environ.get("MONGO_MIEMBROS"):
+    db = _mongo()
+    if db is None:
         return []
-    from pymongo import MongoClient
-    db = MongoClient(f"mongodb://{os.environ['MONGO_MIEMBROS']}/?replicaSet=rs0&authSource=admin",
-                     username=os.environ["MONGO_APP_USUARIO"], password=os.environ["MONGO_APP_CLAVE"],
-                     serverSelectionTimeoutMS=5000)["breb"]
     try:
         return [[d["entidad"], "; ".join(d["acciones"]), d["recibida"]]
                 for d in db.alertas_recibidas.find({"transaction_uuid": uuid})]
