@@ -57,8 +57,11 @@ Pensado para el equipo de la demo: Windows 11, 16 GB de RAM, Docker Desktop con 
 |---|---|---|
 | `dev` (por defecto, `infra/.env`) | `docker compose up -d` | 1 bróker de Kafka, MongoDB con 1 miembro, 1 worker de Spark |
 | `completo` | `docker compose --env-file completo.env up -d` | 3 brókers, replica set de 3 y 2 workers, para las pruebas de falla |
+| `consumo` (se suma a otro) | `docker compose --profile consumo up -d` | PostgreSQL, Hive Metastore, Trino y Metabase |
 
-Los topes de memoria de los contenedores suman 8,0 GiB en `dev` y 12,1 GiB en `completo`. Son máximos, no reservas: el consumo real hay que medirlo con `docker stats` (riesgo R5). La fase 2b agrega Airflow, Trino y Metabase, así que esa medición decide si el perfil completo cabe entero en 16 GB.
+Para sumar `consumo` a `completo` hay que nombrar los dos perfiles: `docker compose --env-file completo.env --profile completo --profile consumo up -d`. Con un `--profile` en la línea de comandos, Compose ignora el `COMPOSE_PROFILES` de `completo.env`: con solo `--profile consumo` quedaría 1 bróker con la configuración de 3, y `kafka-init` fallaría.
+
+Los topes de memoria de los contenedores suman 8,0 GiB en `dev`, 12,1 GiB en `completo` y 4,1 GiB más con `consumo`. Son máximos, no reservas: el consumo real hay que medirlo con `docker stats` (riesgo R5). Con la prueba de Delta corriendo, el perfil `completo` usó 4,59 GiB de los 11,68 GiB de WSL. `completo` y `consumo` juntos suman 16,2 GiB de topes; la decisión D5 del plan propone usar `dev` + `consumo` para la demo.
 
 En el perfil completo, **todos** los comandos de `docker compose` llevan `--env-file completo.env`. Para cambiar de perfil hay que borrar los volúmenes: el quórum de Kafka y el replica set quedan guardados en ellos.
 ```powershell
@@ -72,13 +75,19 @@ docker compose run --rm spark-cliente python /opt/breb/herramientas/infra/verifi
 docker compose run --rm spark-cliente spark-submit /opt/breb/herramientas/infra/prueba_delta_s3.py   # PRUEBA DELTA OK
 docker stats --no-stream                  # RAM por contenedor (riesgo R5)
 ```
-Interfaces: Spark en http://localhost:8080 (master) y 8081/8082 (workers). Puertos para clientes del host: Kafka `localhost:29092` (29093 y 29094 en completo), MongoDB `localhost:27017` (con `directConnection=true`), S3 `localhost:8333`, DynamoDB `localhost:8000` y moto `localhost:5000`. Todos escuchan solo en 127.0.0.1. Las credenciales de `infra/credenciales/` son solo para este entorno local.
+Con el perfil `consumo` (en `completo`, con los dos `--profile` de arriba):
+```powershell
+docker compose --profile consumo run --rm spark-cliente spark-submit /opt/breb/herramientas/infra/prueba_consulta.py   # PRUEBA CONSULTA OK
+```
+La primera vez, Metabase se configura en http://localhost:3000: crear el usuario administrador y agregar una base de datos de tipo **Starburst** (sirve para Trino) con host `trino`, puerto `8080`, catálogo `lakehouse`, usuario `metabase` y sin contraseña ni SSL. Trino también responde en http://localhost:8090 para clientes del host.
+Interfaces: Spark en http://localhost:8080 (master) y 8081/8082 (workers); con `consumo`, Trino en http://localhost:8090 y Metabase en http://localhost:3000. Puertos para clientes del host: Kafka `localhost:29092` (29093 y 29094 en completo), MongoDB `localhost:27017` (con `directConnection=true`), S3 `localhost:8333`, DynamoDB `localhost:8000` y moto `localhost:5000`. Todos escuchan solo en 127.0.0.1. Las credenciales de `infra/credenciales/` son solo para este entorno local.
 
 ### Apagar
 `docker compose down` detiene todo y conserva los datos; `docker compose down -v` también borra los volúmenes.
 
 ### Problemas comunes
 - **`lookup production.cloudfront.docker.com: no such host`** al descargar imágenes: Windows no resolvió el dominio del que Docker Hub sirve las capas. Repetir `docker compose pull`. Si sigue fallando, comparar `Resolve-DnsName production.cloudfront.docker.com` con `Resolve-DnsName production.cloudfront.docker.com -Server 1.1.1.1`. Si solo el segundo responde, el DNS de la red falla: cambiar el DNS del adaptador a `1.1.1.1` y `8.8.8.8` (Configuración → Red e Internet → Wi-Fi → Propiedades de hardware → Asignación de servidor DNS) o usar otra red, y reiniciar Docker Desktop.
+- **`No writable volumes and no free volumes left`** en el log de SeaweedFS, o Spark reintentando escrituras durante minutos: SeaweedFS se quedó sin volúmenes para un bucket. `WEED_MASTER_VOLUME_GROWTH_COPY_1=1` en `docker-compose.yml` lo evita; si pasa, liberar disco en Windows o borrar los datos de prueba con `docker compose down -v`.
 - **`image "docker.io/library/breb-spark:local": already exists`** al construir: pasaba cuando varios servicios tenían la misma sección `build`. Ahora solo `spark-master` construye la imagen y los demás la reutilizan.
 
 ## Artefactos del modelo
