@@ -10,7 +10,7 @@ Plan para construir la arquitectura del Entregable 1 v2.0 (`documento/Entregable
 | 0. Repositorio y contratos | S13 | 8 de 10 |
 | 1. Modelo dentro del Job 2 | S13 | 10 de 10 |
 | 2. Infraestructura local | S13 | 15 de 17 |
-| 3. Ingesta | S13–S14 | 2 de 5 |
+| 3. Ingesta | S13–S14 | 6 de 7 |
 | 4. Streaming | S14 | 0 de 8 |
 | 5. Batch y orquestación | S15 | 0 de 6 |
 | 6. Consumo y gobernanza | S15 | 0 de 6 |
@@ -64,11 +64,14 @@ Criterio del hito S13: `docker compose up` levanta todo con el perfil de desarro
 - [x] README: levantar el stack desde cero en Windows 11
 
 ## Fase 3 · Ingesta (S13–S14)
+Decisión D3: el productor publica directo en Kafka, sin API de ingesta.
 - [x] Conversión de filas de IBM AML a eventos: `seq`, UUID v5, sin etiqueta (`src/breb/productor/eventos.py`)
 - [x] Generador de eventos inválidos para demostrar la cuarentena
-- [ ] Productor: lee LI-Small, reproduce desde el corte de validación a una tasa configurable, por escalones (100, 250, 500, 750 y 1.000 ev/s), con un porcentaje opcional de inválidos
-- [ ] API de ingesta: recibe lotes por HTTPS y publica en Kafka con `acks=all` y `enable.idempotence=true` (decisión D3)
-- [ ] Medir fuente → Kafka con p99 < 300 ms (RF1)
+- [x] `python -m breb.productor preparar`: lee LI-Small una vez y guarda en `datos/productor/` las transacciones posteriores al corte de validación (`eventos_test.parquet`) y sus etiquetas para Gold (`etiquetas_test.parquet`)
+- [x] `python -m breb.productor publicar`: reproduce en orden de `seq` por escalones (por defecto 100, 250, 500, 750 y 1.000 ev/s, 60 s cada uno), con clave `source_account`, `acks=all`, idempotencia, fracción opcional de inválidos y `--continuar` desde el último `seq` publicado
+- [x] Medición fuente → Kafka (RF1): de `produced_at` a la hora de escritura en el bróker (LogAppendTime), con p50, p95 y p99 por escalón e informe JSON en `datos/mediciones/`. Sin Docker, con datos sintéticos: p99 de 6 a 7 ms entre 200 y 2.000 ev/s; el tópico tiene todos los mensajes, en orden de `seq` por partición y sin duplicados
+- [x] Imagen y servicio `productor` (`infra/productor/`, perfil `herramientas`), sin Spark
+- [ ] En Docker en el equipo de la demo con LI-Small real: `preparar` y los cinco escalones con p99 < 300 ms (RF1)
 
 ## Fase 4 · Streaming (S14)
 Criterio del hito S14: un evento llega a Bronze, Silver y MongoDB; el Job 2 publica alertas; p99 < 3 s.
@@ -109,7 +112,7 @@ Criterio del hito S14: un evento llega a Bronze, Silver y MongoDB; el Job 2 publ
 - [ ] Completar en el documento la tasa sostenida y el p99 medidos
 - [ ] Publicar el `.drawio` y poner su enlace en la sección 3
 - [ ] Actualizar el documento: `transaction_uuid` es UUID v5 (no v4) y resultado de la decisión D2
-- [ ] Actualizar el documento: Kafka 4.3 en lugar de 3.6, SeaweedFS en lugar de MinIO, el parche de `S3DynamoDBLogStore`, Hive Metastore 4.2.1, Trino 484 con `register_table` y el perfil `consumo`
+- [ ] Actualizar el documento: el productor publica directo en Kafka, sin API de ingesta (D3); Kafka 4.3 en lugar de 3.6, SeaweedFS en lugar de MinIO, el parche de `S3DynamoDBLogStore`, Hive Metastore 4.2.1, Trino 484 con `register_table` y el perfil `consumo`
 - [ ] Guion de la demo con los pasos del diagrama
 - [ ] Ensayo de preguntas: explicar cualquier componente del diagrama
 
@@ -119,7 +122,6 @@ Criterio del hito S14: un evento llega a Bronze, Silver y MongoDB; el Job 2 publ
 | # | Decisión | Opciones | Hito |
 |---|---|---|---|
 | D2 | Particiones del tópico frente al orden de las variables | Con varias particiones, dos eventos muy cercanos pueden caer en micro-batches distintos y procesarse en otro orden, lo que cambia un poco los acumulados (sobre todo los de banco). Medirlo con la paridad en línea; si la diferencia afecta decisiones, usar 1 partición para la demo | S14 |
-| D3 | Tecnología de la API de ingesta | Contenedor Python mínimo. Si usan FastAPI, aclarar que su consumidor es Kafka, no el motor de autorización que se eliminó | S13 |
 | D4 | Estado inicial en el equipo de 16 GB | Calcularlo en Python pide unos 5,5 GB, que no caben junto al stack completo. Opciones: calcularlo en Kaggle y exportar los documentos (unos 390 MB sin comprimir) para que el DAG `bootstrap_state` solo los cargue; correr el DAG con el resto del stack apagado; o bajar la memoria de `cargar` y `procesar` (tipos categóricos, sin guardar las variables crudas) | S15 |
 | D5 | Perfiles para la demo | Propuesta: la demo de punta a punta corre `dev` + `consumo` (y Airflow); las pruebas de falla corren `completo` sin `consumo`. Juntos, los topes de memoria suman 16,7 GiB frente a 11,68 GiB de WSL; `dev` + `consumo` usaron 4,03 GiB en reposo. Se decide con la RAM medida en la fase 7 | S16 |
 
@@ -134,6 +136,7 @@ Criterio del hito S14: un evento llega a Bronze, Silver y MongoDB; el Job 2 publ
 - **El Hive Metastore 4.2.1 no aplicó las claves JDO de `hive-site.xml`** y siguió usando Derby. `infra/hms/iniciar_hms.sh` las pasa con `-D`, como en la documentación de la imagen, y tampoco imprime la clave en el log.
 - **Spark no habla con el metastore.** Spark escribe Delta en S3 y la tabla se registra una vez con `CALL lakehouse.system.register_table`; Trino lee el log de Delta en cada consulta, así que ve los datos nuevos sin volver a registrarla.
 - **El servicio IAM del filer de SeaweedFS no tiene autenticación.** Por eso solo se publica el puerto S3 (8333), y únicamente en 127.0.0.1.
+- **El primer mensaje del productor tarda cientos de ms** mientras obtiene la metadata y el PID de idempotencia. El productor lo envía antes de medir y lo reporta aparte como calentamiento.
 - **El orden importa.** Las transacciones del mismo minuto se procesan en el orden del CSV (`seq`). Por eso el productor debe emitir en ese orden y el Job 2 ordena cada micro-batch por `seq`.
 
 ## Verificación rápida

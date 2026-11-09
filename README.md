@@ -14,7 +14,7 @@ Proyecto final de ST1630 Sistemas Intensivos en Datos (EAFIT, 2026-2). Implement
 | `src/breb/modelo/` | Carga del modelo y puntuación |
 | `src/breb/estado/` | Estado en MongoDB, idempotente por micro-batch, y estado inicial |
 | `src/breb/job2/` | Lógica del micro-batch del Job 2, sin Spark |
-| `src/breb/productor/` | Conversión de filas a eventos |
+| `src/breb/productor/` | Productor de la demo: conversión de filas a eventos y publicación en Kafka por escalones |
 | `modelo/` | Notebook de entrenamiento (versión 1 de Kaggle) y artefactos del modelo |
 | `herramientas/referencia/` | Dataset sintético y ejecución del notebook original para la prueba de paridad |
 | `herramientas/kaggle/` | Notebooks para Kaggle: verificación de paridad con datos reales y demo del modelo |
@@ -22,7 +22,7 @@ Proyecto final de ST1630 Sistemas Intensivos en Datos (EAFIT, 2026-2). Implement
 | `herramientas/infra/` | Verificación del stack y prueba de Delta Lake sobre el S3 local |
 | `tests/` | Pruebas (paridad, Job 2 con MongoDB, contratos) |
 
-Pendiente según el plan: `jobs/` (Spark), `dags/` (Airflow), `servicios/` (API de ingesta y servicio de la entidad).
+Pendiente según el plan: `jobs/` (Spark), `dags/` (Airflow), `servicios/` (servicio de la entidad).
 
 ## Entorno de desarrollo
 La versión de Python y de las librerías es la de la imagen de Spark: PySpark 3.5 admite hasta Python 3.11 y exige numpy < 2.
@@ -81,6 +81,21 @@ docker compose --profile consumo run --rm spark-cliente spark-submit /opt/breb/h
 ```
 La primera vez, Metabase se configura en http://localhost:3000: crear el usuario administrador y agregar una base de datos de tipo **Starburst** (sirve para Trino) con host `trino`, puerto `8080`, catálogo `lakehouse`, usuario `metabase` y sin contraseña ni SSL. Trino también responde en http://localhost:8090 para clientes del host.
 Interfaces: Spark en http://localhost:8080 (master) y 8081/8082 (workers); con `consumo`, Trino en http://localhost:8090 y Metabase en http://localhost:3000. Puertos para clientes del host: Kafka `localhost:29092` (29093 y 29094 en completo), MongoDB `localhost:27017` (con `directConnection=true`), S3 `localhost:8333`, DynamoDB `localhost:8000` y moto `localhost:5000`. Todos escuchan solo en 127.0.0.1. Las credenciales de `infra/credenciales/` son solo para este entorno local.
+
+### Productor (fase 3)
+Publica las transacciones de LI-Small en `breb.transacciones.raw`, directo en Kafka (decisión D3). Primero hay que descargar `LI-Small_Trans.csv` del dataset [IBM Transactions for Anti Money Laundering](https://www.kaggle.com/datasets/ealtman2019/ibm-transactions-for-anti-money-laundering-aml) en la carpeta `datos/` del repositorio, que git ignora.
+```powershell
+docker compose --profile herramientas build productor
+docker compose run --rm productor preparar      # una vez: unos 4 GB de RAM y 1 a 2 minutos
+docker compose run --rm productor publicar      # 100, 250, 500, 750 y 1.000 ev/s, 60 s cada uno
+```
+Opciones de `publicar`:
+- `--escalones "500:120"` cambia las tasas y duraciones (`tasa:segundos`, separadas por coma).
+- `--invalidos 0.01` mezcla un 1 % de eventos inválidos para mostrar la cuarentena.
+- `--continuar` sigue después del último `seq` publicado.
+- `--max` limita la cantidad de transacciones.
+
+Al final imprime, por escalón, la tasa lograda y la latencia fuente → Kafka (p50 y p99, RF1: p99 < 300 ms), y guarda el informe en `datos/mediciones/`. Después de `docker compose down -v`, el tópico queda vacío: la siguiente corrida va sin `--continuar`.
 
 ### Apagar
 `docker compose down` detiene todo y conserva los datos; `docker compose down -v` también borra los volúmenes.
