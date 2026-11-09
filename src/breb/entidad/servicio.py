@@ -102,6 +102,20 @@ def aplicar_alerta(db, entidad: int, alerta: dict) -> list[str]:
     return acciones
 
 
+def entidades_del_tramo(dir_productor: str, dir_modelo: str) -> list[int]:
+    """Todas las entidades (origen o destino) de las alertas del tramo de la demo, a partir de la puntuación fuera
+    de línea (scores_test.parquet), que es idéntica a la del Job 2."""
+    import pandas as pd
+    tramo = json.loads(open(os.path.join(dir_productor, "tramo_demo.json")).read())["tramo"]
+    umbral = json.loads(open(os.path.join(dir_modelo, "model_meta.json")).read())["threshold"]
+    desde, hasta = tramo["desde_seq"], tramo["desde_seq"] + tramo["transacciones"]
+    s = pd.read_parquet(os.path.join(dir_productor, "scores_test.parquet"), columns=["seq", "score"])
+    s = s[(s["seq"] >= desde) & (s["seq"] < hasta) & (s["score"] >= umbral)]
+    ev = pd.read_parquet(os.path.join(dir_productor, "eventos_test.parquet"), columns=["seq", "from_bank", "to_bank"])
+    ev = ev[ev["seq"].isin(s["seq"])]
+    return sorted({int(b) for b in pd.concat([ev["from_bank"], ev["to_bank"]])})
+
+
 def _recibir(sqs, url: str, espera_s: int):
     return sqs.receive_message(QueueUrl=url, MaxNumberOfMessages=10, WaitTimeSeconds=espera_s).get("Messages", [])
 
@@ -112,10 +126,11 @@ def atender_entidades(entidades: list[int], una_vez: bool = False, registro=prin
     colas = {e: asegurar_entidad(sns, sqs, e) for e in entidades}
     registro(f"entidades {', '.join(map(str, entidades))}: escuchando sus colas SQS")
     totales = {"procesadas": 0, "duplicadas": 0, "rechazadas": 0}
+    espera = 1 if len(colas) <= 3 else 0     # con muchas colas, consulta rápida a cada una y pausa al final
     while True:
         recibidos = 0
         for entidad, url in colas.items():
-            for m in _recibir(sqs, url, 1):
+            for m in _recibir(sqs, url, espera):
                 recibidos += 1
                 alerta = json.loads(m["Body"])
                 errores = errores_alerta(alerta)
@@ -133,6 +148,8 @@ def atender_entidades(entidades: list[int], una_vez: bool = False, registro=prin
                 sqs.delete_message(QueueUrl=url, ReceiptHandle=m["ReceiptHandle"])
         if una_vez and recibidos == 0:
             return totales
+        if recibidos == 0 and espera == 0:
+            time.sleep(1)
 
 
 def bandeja_analistas(una_vez: bool = False, registro=print) -> int:

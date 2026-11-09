@@ -95,21 +95,25 @@ def coleccion(sesion: str) -> int:
 def preguntas() -> list[dict]:
     meta = json.loads(open(os.path.join(DIR_MODELO, "model_meta.json")).read())
     i = {f: meta["num_features"].index(f) + 1 for f in
-         ("is_first_sender_pair", "sender_inflow_gap_sec", "sender_has_prior_inflow", "passthrough_amount_ratio")}
+         ("is_first_sender_pair", "distinct_recipients_from", "sender_inflow_gap_sec", "sender_has_prior_inflow",
+          "passthrough_amount_ratio")}
     base = ("FROM gold.fact_transferencias f JOIN gold.risk_decisions r ON r.transaction_uuid = f.transaction_uuid "
             "JOIN gold.dim_cuenta o ON o.cuenta_key = f.cuenta_origen_key "
             "JOIN gold.dim_cuenta d ON d.cuenta_key = f.cuenta_destino_key")
     alerta = "CASE WHEN f.decision = 'alerta' THEN 1 ELSE 0 END"
     return [
-        {"nombre": "Desempeño del modelo frente a las etiquetas reales", "tipo": "table", "ancho": 12, "alto": 4, "sql":
-         f"SELECT count(*) AS transacciones, sum({alerta}) AS alertas, "
-         "sum(CASE WHEN f.decision = 'alerta' AND f.es_lavado = 1 THEN 1 ELSE 0 END) AS alertas_con_lavado, "
-         "sum(f.es_lavado) AS lavado_real, "
-         "round(1.0 * sum(CASE WHEN f.decision = 'alerta' AND f.es_lavado = 1 THEN 1 ELSE 0 END) / nullif(sum("
-         f"{alerta}), 0), 3) AS precision, "
-         "round(1.0 * sum(CASE WHEN f.decision = 'alerta' AND f.es_lavado = 1 THEN 1 ELSE 0 END) / nullif(sum(f.es_lavado), 0), 3) AS recall "
-         "FROM gold.fact_transferencias f"},
-        {"nombre": "Latencia Kafka → decisión por minuto (RNF-02)", "tipo": "line", "ancho": 12, "alto": 4,
+        {"nombre": "Desempeño del modelo frente a las etiquetas reales", "tipo": "table", "ancho": 12, "alto": 6, "sql":
+         # Una métrica por fila, para que quepa en media pantalla
+         f"WITH m AS (SELECT count(*) AS n, sum({alerta}) AS alertas, "
+         "sum(CASE WHEN f.decision = 'alerta' AND f.es_lavado = 1 THEN 1 ELSE 0 END) AS vp, "
+         "sum(f.es_lavado) AS lavado FROM gold.fact_transferencias f) "
+         "SELECT metrica, valor FROM m CROSS JOIN UNNEST("
+         "ARRAY['transacciones evaluadas', 'alertas emitidas', 'alertas con lavado real (VP)', 'alertas sin lavado (FP)', "
+         "'lavado no detectado (FN)', 'precisión', 'recall'], "
+         "ARRAY[CAST(n AS double), CAST(alertas AS double), CAST(vp AS double), CAST(alertas - vp AS double), "
+         "CAST(lavado - vp AS double), round(CAST(vp AS double) / nullif(alertas, 0), 3), "
+         "round(CAST(vp AS double) / nullif(lavado, 0), 3)]) AS t(metrica, valor)"},
+        {"nombre": "Latencia Kafka → decisión por minuto (RNF-02)", "tipo": "line", "ancho": 12, "alto": 6,
          "visual": {"graph.dimensions": ["minuto"], "graph.metrics": ["p50_s", "p99_s"]}, "sql":
          "SELECT date_trunc('minute', kafka_timestamp) AS minuto, count(*) AS transacciones, "
          "round(approx_percentile(latencia_ms, 0.5) / 1000, 1) AS p50_s, round(approx_percentile(latencia_ms, 0.99) / 1000, 1) AS p99_s "
@@ -120,13 +124,16 @@ def preguntas() -> list[dict]:
          "round(f.risk_score, 3) AS score, CASE f.es_lavado WHEN 1 THEN 'sí' ELSE 'no' END AS lavado_real, "
          f"round(f.latencia_ms / 1000, 1) AS latencia_s {base.replace('JOIN gold.risk_decisions r ON r.transaction_uuid = f.transaction_uuid ', '')} "
          "WHERE f.decision = 'alerta' ORDER BY f.event_time"},
-        {"nombre": "1. Ordenantes con muchos destinatarios nuevos (ventanas de 5 min)", "tipo": "table", "ancho": 12, "alto": 6,
+        # Con LI-Small, en 5 minutos casi ningún ordenante paga a 2 destinatarios nuevos: se listan los que más
+        # tienen, junto con sus destinatarios distintos de toda la historia (variable del modelo).
+        {"nombre": "1. Ordenantes con más destinatarios nuevos (ventanas de 5 min)", "tipo": "table", "ancho": 12, "alto": 6,
          "sql": "SELECT o.cuenta_id AS ordenante, "
          "date_add('minute', -(minute(f.event_time) % 5), date_trunc('minute', f.event_time)) AS ventana_5_min, "
          f"count(*) AS transferencias, CAST(sum(element_at(r.variables, {i['is_first_sender_pair']})) AS integer) AS destinatarios_nuevos, "
+         f"CAST(max(element_at(r.variables, {i['distinct_recipients_from']})) AS integer) AS destinatarios_historicos, "
          f"round(max(r.risk_score), 3) AS score_maximo, sum({alerta}) AS alertas {base} "
-         f"GROUP BY 1, 2 HAVING sum(element_at(r.variables, {i['is_first_sender_pair']})) >= 2 "
-         "ORDER BY destinatarios_nuevos DESC, score_maximo DESC LIMIT 25"},
+         f"GROUP BY 1, 2 HAVING sum(element_at(r.variables, {i['is_first_sender_pair']})) >= 1 "
+         "ORDER BY destinatarios_nuevos DESC, alertas DESC, score_maximo DESC LIMIT 25"},
         {"nombre": "2. Concentración hacia posibles cuentas mula (ventanas de 10 min)", "tipo": "table", "ancho": 12, "alto": 6,
          "sql": "SELECT d.cuenta_id AS receptora, "
          "date_add('minute', -(minute(f.event_time) % 10), date_trunc('minute', f.event_time)) AS ventana_10_min, "

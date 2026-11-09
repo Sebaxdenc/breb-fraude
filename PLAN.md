@@ -13,7 +13,7 @@ Plan para construir la arquitectura del Entregable 1 v2.0 (`documento/Entregable
 | 3. Ingesta | S13–S14 | 7 de 7 |
 | 4. Streaming | S14 | 12 de 13 |
 | 5. Batch y orquestación | S15 | 3 de 7 |
-| 6. Consumo y gobernanza | S15 | 6 de 8 |
+| 6. Consumo y gobernanza | S15 | 7 de 8 |
 | 7. Pruebas y endurecimiento | S16 | 3 de 9 |
 | 8. Documento y sustentación | S16 | 0 de 6 |
 
@@ -22,7 +22,7 @@ Prioridad del equipo: mostrar el flujo completo funcionando. La latencia (D6) qu
 1. Alertas a las entidades y a los analistas: SNS → SQS → servicio de retención → MongoDB (fase 6) · hecho
 2. Tramo de la demo con alertas: puntuación fuera de línea del test y estado hasta ese punto · hecho
 3. Gold: Job 4 con el modelo en estrella y las etiquetas (fase 5) · hecho
-4. Trino con las tablas registradas, permisos, linaje y tablero de Metabase (fase 6) · probado sin Docker
+4. Trino con las tablas registradas, permisos, linaje y tablero de Metabase (fase 6) · hecho
 5. Airflow 3 con los tres DAG (fases 2 y 5)
 6. Guion de la demo con perfiles escalonados para que quepa en 11,7 GB de WSL (D5)
 
@@ -115,7 +115,7 @@ Criterio del hito S14: un evento llega a Bronze, Silver y MongoDB; el Job 2 publ
 - [x] Reglas de acceso de Trino (`infra/trino/etc/reglas.json`): `breb_admin` registra tablas; `cumplimiento` lee las tres capas; `analista` y `metabase` solo Gold; cualquier otro usuario, nada. `python -m breb.consumo permisos` comprueba 10 casos
 - [x] Tablero de Metabase creado por la API (`python -m breb.consumo tablero`): las cuatro preguntas de la sección 1.3 (en 5 preguntas), alertas emitidas, desempeño frente a las etiquetas, latencia por minuto y salud del streaming
 - [x] Linaje (`python -m breb.consumo linaje [uuid]`), como `cumplimiento`: Bronze con coordenadas de Kafka, Silver, decisión, hechos con nivel de riesgo de las cuentas y acciones de las entidades en MongoDB; 1,1 s (RNF-06)
-- [ ] Capa de consumo en Docker con el tramo: registrar, permisos, linaje y tablero
+- [x] Capa de consumo en Docker con el tramo ([#18](https://github.com/Sebaxdenc/breb-fraude/pull/18)): 11 tablas registradas (15.000 en Bronze, Silver, `risk_decisions` y hechos; 1.038.880 etiquetas), **PERMISOS OK** en los 10 casos, linaje de la alerta con score 0,9953 en 6 s y tablero de Metabase con las 9 preguntas
 
 ## Fase 7 · Pruebas y endurecimiento (S16)
 - [x] Tramo de la demo (`python -m breb.estado tramo`): puntúa todo el test con el motor del Job 2, compara PR-AUC, verdaderos y falsos positivos con el notebook, y elige las N transacciones consecutivas con más alertas. `cargar --desde-seq` deja el estado justo antes de ese tramo. Con los datos sintéticos, el PR-AUC salió idéntico al del notebook
