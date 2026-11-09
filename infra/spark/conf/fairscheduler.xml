@@ -1,12 +1,18 @@
 <?xml version="1.0"?>
 <!-- Pools del planificador FAIR (spark.scheduler.mode=FAIR). En el Job 2, la consulta de decisiones va en
-     "decisiones" y las ventanas del RF3 en "ventanas": cuando compiten por los núcleos del ejecutor, las
-     decisiones (RNF-02) tienen 10 veces más peso. Las demás aplicaciones usan el pool por defecto. -->
+     "decisiones" y la que copia los archivos a risk_decisions en "registro": cuando compiten por los núcleos
+     del ejecutor, las decisiones (RNF-02) tienen 10 veces más peso. Las demás aplicaciones usan el pool por
+     defecto. -->
 <allocations>
   <pool name="decisiones">
     <schedulingMode>FIFO</schedulingMode>
     <weight>10</weight>
     <minShare>1</minShare>
+  </pool>
+  <pool name="registro">
+    <schedulingMode>FIFO</schedulingMode>
+    <weight>1</weight>
+    <minShare>0</minShare>
   </pool>
   <pool name="ventanas">
     <schedulingMode>FIFO</schedulingMode>

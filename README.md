@@ -106,11 +106,13 @@ docker compose down -v                                             # tópico, Mo
 docker compose build
 docker compose up -d
 docker compose run --rm spark-cliente python -m breb.estado cargar  # unos 5,5 GB de RAM y de 3 a 5 minutos
-docker compose --profile streaming up -d                           # job1-bronze, job2-riesgo y job3-silver
+docker compose --profile streaming up -d                           # job1-bronze, job2-riesgo, job2-ventanas y job3-silver
 docker compose run --rm productor publicar --escalones "100:60,250:60,500:60"
 docker compose run --rm spark-cliente spark-submit /opt/breb/herramientas/streaming/verificar_fase4.py --esperar 600
 ```
 `verificar_fase4.py` compara Kafka, Bronze, Silver, `risk_decisions` y MongoDB. También mide la paridad en línea con el notebook y la latencia del RNF-02, total y por minuto de publicación. Termina en `FASE 4 OK`. Cada micro-batch del Job 2 imprime cuánto tardó cada tramo: `docker compose logs job2-riesgo | Select-String "batch"`.
+
+Para seguir publicando sin volver a cargar el estado, se deja el stack arriba y se publica con `--continuar`: los jobs siguen desde sus checkpoints y el productor desde el último `seq`.
 
 ### Apagar
 `docker compose down` detiene todo y conserva los datos; `docker compose down -v` también borra los volúmenes.

@@ -48,9 +48,8 @@ kafka = (spark.read.format("kafka").option("kafka.bootstrap.servers", KAFKA).opt
 n_kafka = kafka.count()
 print(f"Kafka: {n_kafka:,} mensajes en {TOPICO}", flush=True)
 
-# Esperar a que los jobs se pongan al día (triggers de 30 s y 1 s): Bronze completo y conteos estables
+# Esperar a que los jobs se pongan al día (triggers de 30, 10 y 1 s)
 limite = time.monotonic() + a.esperar
-anterior = None
 
 
 def contar(ruta: str) -> int:
@@ -60,12 +59,22 @@ def contar(ruta: str) -> int:
         return 0
 
 
+def validos_bronze() -> int:
+    try:
+        return spark.read.format("delta").load(BRONZE).where("is_valid").select("transaction_uuid").distinct().count()
+    except Exception:  # noqa: BLE001
+        return -1
+
+
 while True:
     conteos = tuple(contar(r) for r in (BRONZE, SILVER, RISK_DECISIONS))
-    if (conteos[0] >= n_kafka and conteos[2] > 0 and conteos == anterior) or time.monotonic() > limite:
+    # Listo cuando Bronze tiene todo Kafka y Silver y risk_decisions tienen todas las válidas de Bronze
+    if conteos[0] >= n_kafka and min(conteos[1], conteos[2]) >= validos_bronze() >= 0:
+        break
+    if time.monotonic() > limite:
+        print(f"  dejé de esperar después de {a.esperar} s: el Job 2 o el Job 3 siguen atrasados", flush=True)
         break
     print(f"  esperando: Bronze {conteos[0]:,}, Silver {conteos[1]:,}, risk_decisions {conteos[2]:,}", flush=True)
-    anterior = conteos
     time.sleep(15)
 
 bronze = spark.read.format("delta").load(BRONZE)

@@ -11,7 +11,7 @@ Plan para construir la arquitectura del Entregable 1 v2.0 (`documento/Entregable
 | 1. Modelo dentro del Job 2 | S13 | 10 de 10 |
 | 2. Infraestructura local | S13 | 16 de 17 |
 | 3. Ingesta | S13–S14 | 7 de 7 |
-| 4. Streaming | S14 | 9 de 11 |
+| 4. Streaming | S14 | 11 de 12 |
 | 5. Batch y orquestación | S15 | 0 de 6 |
 | 6. Consumo y gobernanza | S15 | 0 de 6 |
 | 7. Pruebas y endurecimiento | S16 | 0 de 6 |
@@ -84,8 +84,9 @@ Criterio del hito S14: un evento llega a Bronze, Silver y MongoDB; el Job 2 publ
 - [x] Job 3 (`src/breb/streaming/job3_silver.py`): Bronze válidos → Silver en UTC, sin duplicados, con MERGE por `transaction_uuid` que solo inserta (RF6). Sin `dropDuplicatesWithinWatermark`: la reproducción comprime el tiempo unas 155 veces y descartaría eventos de una partición demorada
 - [x] `herramientas/streaming/verificar_fase4.py`: Kafka = Bronze, Silver y `risk_decisions` sin duplicados, paridad en línea contra el notebook, latencia del RNF-02 (total y por minuto), ventanas en MongoDB y tabla de métricas
 - [x] Sin Docker, con datos sintéticos y Spark local, a 200 ev/s: Bronze, Silver y `risk_decisions` completos; 7.920 de 7.920 transacciones con variables y score idénticos al notebook; ventanas y métricas escritas. **La latencia no cumplió** (p99 de 12,9 s): en ese entorno, escribir en `risk_decisions` tardaba de 1,5 a 8 s por micro-batch
-- [ ] En Docker en el equipo de la demo con LI-Small real: `verificar_fase4.py` con **FASE 4 OK** y la latencia por escalón
-- [ ] Si la latencia no cumple en Docker: medir cada tramo del micro-batch (el Job 2 lo imprime) y ajustar (D6)
+- [x] Primera corrida en Docker con LI-Small real (100, 250 y 500 ev/s, [#13](https://github.com/Sebaxdenc/breb-fraude/pull/13)): estado inicial de 2.095.854 documentos cargado en 4,4 min; Bronze 50.998 de 50.998 y Silver 50.998 sin duplicados; **paridad en línea: 20.000 de 20.000 transacciones con variables y score idénticos al notebook**. **La latencia no cumplió**: p99 de 285 s. Los micro-batches del Job 2 crecieron hasta 29.549 transacciones y tardaron hasta 166 s; cada uno pasó de 6 a 19 s escribiendo en `risk_decisions` y hasta 107 s entre MongoDB, variables y modelo, sin desglose
+- [x] Cambios para la latencia (D6): `risk_decisions` sale del camino de la decisión (archivo por micro-batch y consulta aparte que hace un commit cada 10 s); las ventanas del RF3 pasan a su propia aplicación (`job2-ventanas`); Delta reconstruye el estado de la tabla con 4 tareas en vez de 50; Kafka y MongoDB con hasta 2 CPU; el Job 2 imprime el tiempo de cada tramo (lectura de Kafka, lectura de MongoDB, variables, modelo, escritura en MongoDB, SNS, archivo)
+- [ ] En Docker en el equipo de la demo: `verificar_fase4.py` con **FASE 4 OK** y la latencia por escalón
 
 ## Fase 5 · Batch y orquestación (S15)
 - [ ] Job 4: Gold en estrella (`Fact_Transferencias`, `Dim_Cuenta` SCD 2, `Dim_Entidad_Financiera`, `Dim_Canal`, `Dim_Tiempo`) con MERGE (RF7)
@@ -124,8 +125,7 @@ Criterio del hito S14: un evento llega a Bronze, Silver y MongoDB; el Job 2 publ
 ## Decisiones pendientes
 | # | Decisión | Opciones | Hito |
 |---|---|---|---|
-| D2 | Particiones del tópico frente al orden de las variables | Sin Docker: con `maxOffsetsPerTrigger` de 5.000, 226 de 9.204 transacciones tuvieron variables distintas (sobre todo `from_bank_freq` y `to_bank_freq`), con las mismas decisiones; sin tope, 0 de 7.920. El Job 2 queda sin tope por defecto. Falta confirmarlo con LI-Small real en Docker; si hay diferencias que cambien decisiones, usar 1 partición para la demo | S14 |
-| D6 | Latencia del Job 2 (RNF-02) | Sin Docker, la escritura en `risk_decisions` (Delta en SeaweedFS) dominó el micro-batch. Si en Docker el p99 pasa de 3 s: escribir `risk_decisions` cada N micro-batches o en una consulta aparte, y declarar la tasa con la que sí se cumple (RNF-01) | S14 |
+| D6 | Latencia del Job 2 (RNF-02) | Primera corrida en Docker: p99 de 285 s. Se aplicaron los cambios de la fase 4 (#14). Si con ellos el p99 sigue por encima de 3 s, el desglose por tramo dice qué sigue: validar el contrato con expresiones de Spark en vez de Python, o bajar la tasa declarada de la demo (RNF-01) | S14 |
 | D4 | Estado inicial en el equipo de 16 GB | Calcularlo en Python pide unos 5,5 GB, que no caben junto al stack completo. Opciones: calcularlo en Kaggle y exportar los documentos (unos 390 MB sin comprimir) para que el DAG `bootstrap_state` solo los cargue; correr el DAG con el resto del stack apagado; o bajar la memoria de `cargar` y `procesar` (tipos categóricos, sin guardar las variables crudas) | S15 |
 | D5 | Perfiles para la demo | Propuesta: la demo de punta a punta corre `dev` + `consumo` (y Airflow); las pruebas de falla corren `completo` sin `consumo`. Juntos, los topes de memoria suman 16,7 GiB frente a 11,68 GiB de WSL; `dev` + `consumo` usaron 4,03 GiB en reposo. Se decide con la RAM medida en la fase 7 | S16 |
 
@@ -141,6 +141,7 @@ Criterio del hito S14: un evento llega a Bronze, Silver y MongoDB; el Job 2 publ
 - **Spark no habla con el metastore.** Spark escribe Delta en S3 y la tabla se registra una vez con `CALL lakehouse.system.register_table`; Trino lee el log de Delta en cada consulta, así que ve los datos nuevos sin volver a registrarla.
 - **El servicio IAM del filer de SeaweedFS no tiene autenticación.** Por eso solo se publica el puerto S3 (8333), y únicamente en 127.0.0.1.
 - **El primer mensaje del productor tarda cientos de ms** mientras obtiene la metadata y el PID de idempotencia. El productor lo envía antes de medir y lo reporta aparte como calentamiento.
+- **Decisión D2 resuelta: el orden entre particiones no altera las variables.** Con LI-Small real en Docker, 6 particiones y el Job 2 sin `maxOffsetsPerTrigger`, las 20.000 transacciones de `golden_sample.parquet` salieron idénticas al notebook. Con tope, Spark lo reparte entre particiones y sí aparecen diferencias.
 - **El orden importa.** Las transacciones del mismo minuto se procesan en el orden del CSV (`seq`). Por eso el productor debe emitir en ese orden y el Job 2 ordena cada micro-batch por `seq`.
 
 ## Verificación rápida

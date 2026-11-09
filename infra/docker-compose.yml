@@ -19,7 +19,8 @@ x-kafka: &kafka
     retries: 5
   deploy:
     resources:
-      limits: {cpus: "1.0", memory: 768m}
+      # 2 CPU: con 1, el bróker se saturó mientras los jobs leían el tópico (p99 fuente → Kafka de 4,9 s)
+      limits: {cpus: "2.0", memory: 768m}
 
 x-kafka-env: &kafka-env
   CLUSTER_ID: ${KAFKA_CLUSTER_ID}
@@ -55,7 +56,7 @@ x-mongo: &mongo
     start_period: 20s
   deploy:
     resources:
-      limits: {cpus: "1.0", memory: "${MONGO_LIMITE}"}
+      limits: {cpus: "2.0", memory: "${MONGO_LIMITE}"}
 
 # Cinco servicios usan la imagen breb-spark:local, pero solo spark-master la construye: si varios servicios
 # tienen el mismo build e image, Compose (bake) los construye en paralelo y falla con "image already exists".
@@ -280,6 +281,19 @@ services:
     deploy:
       resources:
         limits: {cpus: "2.0", memory: 1792m}
+
+  # Ventanas del RF3 en su propia aplicación, para que no ocupen los núcleos de las decisiones.
+  job2-ventanas:
+    <<: *job
+    hostname: job2-ventanas
+    command: ["spark-submit", "--master", "spark://spark-master:7077",
+              "--conf", "spark.driver.host=job2-ventanas", "--conf", "spark.driver.bindAddress=0.0.0.0",
+              "--conf", "spark.cores.max=${JOB2V_NUCLEOS}", "--conf", "spark.executor.cores=${JOB2V_NUCLEOS}",
+              "--conf", "spark.executor.memory=768m", "--conf", "spark.sql.shuffle.partitions=${JOB2V_NUCLEOS}",
+              "--driver-memory", "768m", "/opt/breb/jobs/job2_ventanas.py"]
+    deploy:
+      resources:
+        limits: {cpus: "1.0", memory: 1280m}
 
   job3-silver:
     <<: *job
