@@ -37,22 +37,20 @@ Pensado para el equipo de la demo: Windows 11, 16 GB de RAM, Docker Desktop con 
 
 ### Preparación (una vez, con internet)
 1. Instalar Docker Desktop con el motor WSL 2.
-2. Darle memoria a WSL: crear `C:\Users\<usuario>\.wslconfig` con
-   ```ini
-   [wsl2]
-   memory=12GB
-   processors=12
-   swap=4GB
+2. Darle memoria a WSL. En PowerShell:
+   ```powershell
+   Set-Content -Path "$env:USERPROFILE\.wslconfig" -Encoding ascii -Value "[wsl2]","memory=12GB","processors=12","swap=4GB"
+   wsl --shutdown
    ```
-   y ejecutar `wsl --shutdown` en PowerShell antes de abrir Docker Desktop de nuevo.
+   Abrir Docker Desktop de nuevo y comprobar con `docker info | Select-String "CPUs|Total Memory"`: debe mostrar 12 CPUs y unos 11,7 GiB. Si muestra 16 CPUs y unos 7,7 GiB, WSL no leyó el archivo (los valores por defecto son todos los núcleos y la mitad de la RAM). Lo más común es que el Bloc de notas lo haya guardado como `.wslconfig.txt`: `Get-ChildItem $env:USERPROFILE -Force -Filter ".wslconfig*"` lo muestra.
 3. Clonar el repositorio. `.gitattributes` deja los scripts con finales de línea LF, que es lo que esperan los contenedores. Si el repositorio ya estaba clonado desde antes de este cambio, es más fácil clonarlo otra vez.
 4. Construir la imagen de Spark y descargar las demás (unos 3 GB; la de Spark tarda unos 10 minutos):
    ```powershell
    cd breb-fraude\infra
    docker compose --env-file completo.env build
-   docker compose --env-file completo.env pull --ignore-buildable
+   docker compose --env-file completo.env pull
    ```
-   Después de esto, el stack arranca sin internet.
+   `pull` omite la imagen de Spark, que es local. Si una descarga falla, se puede repetir: las capas ya descargadas se conservan. Después de esto, el stack arranca sin internet.
 
 ### Perfiles
 | Perfil | Comando | Contenido |
@@ -78,6 +76,10 @@ Interfaces: Spark en http://localhost:8080 (master) y 8081/8082 (workers). Puert
 
 ### Apagar
 `docker compose down` detiene todo y conserva los datos; `docker compose down -v` también borra los volúmenes.
+
+### Problemas comunes
+- **`lookup production.cloudfront.docker.com: no such host`** al descargar imágenes: Windows no resolvió el dominio del que Docker Hub sirve las capas. Repetir `docker compose pull`. Si sigue fallando, comparar `Resolve-DnsName production.cloudfront.docker.com` con `Resolve-DnsName production.cloudfront.docker.com -Server 1.1.1.1`. Si solo el segundo responde, el DNS de la red falla: cambiar el DNS del adaptador a `1.1.1.1` y `8.8.8.8` (Configuración → Red e Internet → Wi-Fi → Propiedades de hardware → Asignación de servidor DNS) o usar otra red, y reiniciar Docker Desktop.
+- **`image "docker.io/library/breb-spark:local": already exists`** al construir: pasaba cuando varios servicios tenían la misma sección `build`. Ahora solo `spark-master` construye la imagen y los demás la reutilizan.
 
 ## Artefactos del modelo
 `modelo/aml_xgb/` debe contener `model_meta.json` (incluido), `aml_xgb.json` y `golden_sample.parquet`, descargados de la pestaña Output de la versión 1 de [AML XGBoost Bre-B Fraud](https://www.kaggle.com/code/sebastianmedinacab/aml-xgboost-bre-b-fraud). No se usa `ohe.joblib`.

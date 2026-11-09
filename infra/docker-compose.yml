@@ -54,11 +54,12 @@ x-mongo: &mongo
     resources:
       limits: {cpus: "1.0", memory: "${MONGO_LIMITE}"}
 
+# Cinco servicios usan la imagen breb-spark:local, pero solo spark-master la construye: si varios servicios
+# tienen el mismo build e image, Compose (bake) los construye en paralelo y falla con "image already exists".
+# pull_policy: never evita que Compose intente descargar esa imagen de Docker Hub, donde no existe.
 x-spark: &spark
   image: breb-spark:local
-  build:
-    context: ..
-    dockerfile: infra/spark/Dockerfile
+  pull_policy: never
   restart: unless-stopped
   env_file: [credenciales/s3.env]
 
@@ -163,6 +164,9 @@ services:
   # ---------------------------------------------------------------- Spark standalone
   spark-master:
     <<: *spark
+    build:
+      context: ..
+      dockerfile: infra/spark/Dockerfile
     hostname: spark-master
     environment: *spark-env
     command: ["spark-class", "org.apache.spark.deploy.master.Master",
