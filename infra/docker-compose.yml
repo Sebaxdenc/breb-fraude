@@ -221,11 +221,29 @@ services:
     environment:
       <<: *spark-env
       SPARK_MASTER_URL: spark://spark-master:7077
-      KAFKA_BOOTSTRAP: kafka-1:9092
+      KAFKA_BOOTSTRAP: ${KAFKA_BOOTSTRAP}
       TRINO_URL: http://trino:8080
       METABASE_URL: http://metabase:3000
       MONGO_MIEMBROS: ${MONGO_MIEMBROS}
     command: ["bash"]
+
+  # Productor de la demo (fase 3): docker compose run --rm productor {preparar|publicar} ...
+  # Lee y escribe en la carpeta datos/ del repositorio (ignorada por git).
+  productor:
+    image: breb-productor:local
+    pull_policy: never
+    build:
+      context: ..
+      dockerfile: infra/productor/Dockerfile
+    profiles: [herramientas]
+    restart: "no"
+    environment:
+      KAFKA_BOOTSTRAP: ${KAFKA_BOOTSTRAP}
+    volumes: ["../datos:/datos"]
+    deploy:
+      resources:
+        # preparar lee el CSV completo (unos 4 GB); publicar usa menos de 1 GB.
+        limits: {cpus: "1.5", memory: 6g}
 
   # ---------------------------------------------------------------- MongoDB (replica set rs0)
   # Genera una sola vez la llave interna del replica set en un volumen, con los permisos que exige mongod.

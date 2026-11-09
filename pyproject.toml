@@ -19,6 +19,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest==8.3.4", "mongomock==4.3.0"]
+# Cliente de Kafka del productor (infra/productor/requirements.txt)
+productor = ["confluent-kafka==2.16.1"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

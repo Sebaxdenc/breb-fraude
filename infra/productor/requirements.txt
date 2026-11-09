@@ -1,0 +1,6 @@
+# Python del productor: las mismas versiones de la imagen de Spark más el cliente de Kafka.
+numpy==1.26.4
+pandas==2.2.3
+pyarrow==17.0.0
+jsonschema==4.23.0
+confluent-kafka==2.16.1

@@ -5,6 +5,7 @@
 !modelo/aml_xgb/
 !infra/spark/
 !infra/hms/
+!infra/productor/
 !infra/init/
 !herramientas/infra/
 **/__pycache__
