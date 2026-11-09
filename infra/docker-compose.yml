@@ -10,10 +10,13 @@ x-kafka: &kafka
   healthcheck:
     # El chequeo arranca una JVM: con poca memoria para no competir con el bróker dentro del límite.
     test: ["CMD-SHELL", "KAFKA_HEAP_OPTS=-Xmx64m /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1"]
-    interval: 20s
+    # Cada chequeo arranca una JVM dentro del límite de 1 CPU del bróker. Cada 5 s mientras arranca
+    # y cada 60 s después, para no quitarle CPU al bróker durante las mediciones de latencia.
+    interval: 60s
+    start_interval: 5s
+    start_period: 90s
     timeout: 15s
-    retries: 10
-    start_period: 30s
+    retries: 5
   deploy:
     resources:
       limits: {cpus: "1.0", memory: 768m}
@@ -349,6 +352,7 @@ services:
       MB_DB_PORT: "5432"
       MB_DB_DBNAME: metabase
       MB_DB_USER: metabase
+      # Con 1 GB de heap, la JVM de Metabase ocupa unos 1,46 GiB: el tope de 2 GiB deja margen.
       JAVA_OPTS: -Xmx1g
       MB_CHECK_FOR_UPDATES: "false"
       MB_ANON_TRACKING_ENABLED: "false"
@@ -361,7 +365,7 @@ services:
       start_period: 60s
     deploy:
       resources:
-        limits: {cpus: "1.0", memory: 1536m}
+        limits: {cpus: "1.0", memory: 2g}
 
   # ---------------------------------------------------------------- SNS y SQS locales (fase 6)
   moto:

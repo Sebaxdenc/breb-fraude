@@ -9,7 +9,7 @@ Plan para construir la arquitectura del Entregable 1 v2.0 (`documento/Entregable
 |---|---|---|
 | 0. Repositorio y contratos | S13 | 8 de 10 |
 | 1. Modelo dentro del Job 2 | S13 | 10 de 10 |
-| 2. Infraestructura local | S13 | 14 de 17 |
+| 2. Infraestructura local | S13 | 15 de 17 |
 | 3. Ingesta | S13–S14 | 2 de 5 |
 | 4. Streaming | S14 | 0 de 8 |
 | 5. Batch y orquestación | S15 | 0 de 6 |
@@ -50,7 +50,7 @@ Criterio del hito S13: `docker compose up` levanta todo con el perfil de desarro
 - [x] Núcleo de `infra/docker-compose.yml` con perfiles `dev` y `completo`: Kafka 4.3.2 KRaft (1 o 3 brókers), SeaweedFS, DynamoDB Local, Spark 3.5.9 (master y 1 o 2 workers), MongoDB 7.0 (replica set de 1 o 3) y moto
 - [x] Perfil `consumo` (fase 2b): PostgreSQL 15.19, Hive Metastore 4.2.1, Trino 484 con el catálogo `lakehouse` (conector Delta) y Metabase 0.65.3.6. Se combina con `dev` o con `completo`
 - [x] `herramientas/infra/prueba_consulta.py` pasó sin Docker: Spark escribe en los tres buckets, Trino crea el esquema y registra las tablas en el metastore, las consultas coinciden y Trino ve un append de Spark sin volver a registrar la tabla (RF11)
-- [ ] Perfil `consumo` en Docker en el equipo de la demo: `prueba_consulta.py` con Metabase y primera conexión de Metabase a Trino
+- [x] Perfil `consumo` en Docker en el equipo de la demo: **PRUEBA CONSULTA OK** en 142 s y Metabase conectado a Trino con el driver Starburst. `dev` + `consumo` usan 4,03 GiB; Metabase llegó a 1,46 GiB de 1,5 GiB, así que su tope sube a 2 GiB
 - [ ] Airflow 3 (fase 2c): imagen con el cliente de Spark para los DAG de la fase 5
 - [x] Imagen de Spark (`infra/spark/Dockerfile`): Python 3.11, numpy 1.26.4, pandas 2.2.3, xgboost-cpu 3.2.0, Delta 3.3.3, JARs verificados por SHA-1, paquete `breb` y artefactos del modelo copiados con `COPY`
 - [x] Creación de tópicos (`infra/kafka/crear_topicos.sh`): `breb.transacciones.raw` con 6 particiones, `replication.factor=3`, `min.insync.replicas=2`, `message.timestamp.type=LogAppendTime` y 7 días de retención en `completo` (1 y 1 en `dev`); probado con un clúster nativo de 3 nodos
@@ -121,7 +121,7 @@ Criterio del hito S14: un evento llega a Bronze, Silver y MongoDB; el Job 2 publ
 | D2 | Particiones del tópico frente al orden de las variables | Con varias particiones, dos eventos muy cercanos pueden caer en micro-batches distintos y procesarse en otro orden, lo que cambia un poco los acumulados (sobre todo los de banco). Medirlo con la paridad en línea; si la diferencia afecta decisiones, usar 1 partición para la demo | S14 |
 | D3 | Tecnología de la API de ingesta | Contenedor Python mínimo. Si usan FastAPI, aclarar que su consumidor es Kafka, no el motor de autorización que se eliminó | S13 |
 | D4 | Estado inicial en el equipo de 16 GB | Calcularlo en Python pide unos 5,5 GB, que no caben junto al stack completo. Opciones: calcularlo en Kaggle y exportar los documentos (unos 390 MB sin comprimir) para que el DAG `bootstrap_state` solo los cargue; correr el DAG con el resto del stack apagado; o bajar la memoria de `cargar` y `procesar` (tipos categóricos, sin guardar las variables crudas) | S15 |
-| D5 | Perfiles para la demo | Propuesta: la demo de punta a punta corre `dev` + `consumo` (y Airflow); las pruebas de falla corren `completo` sin `consumo`. Juntos, los topes de memoria suman 16,2 GiB frente a 11,68 GiB de WSL. Se decide con la RAM medida en la fase 7 | S16 |
+| D5 | Perfiles para la demo | Propuesta: la demo de punta a punta corre `dev` + `consumo` (y Airflow); las pruebas de falla corren `completo` sin `consumo`. Juntos, los topes de memoria suman 16,7 GiB frente a 11,68 GiB de WSL; `dev` + `consumo` usaron 4,03 GiB en reposo. Se decide con la RAM medida en la fase 7 | S16 |
 
 ## Hallazgos que el equipo debe conocer
 - **El motor replica el notebook exactamente, incluidas sus particularidades.** `is_reciprocal_loop` vale 1 cuando el mismo par ordenante→destino ya transó antes, no cuando el destino le había enviado al ordenante: el notebook agrega y busca la clave invertida. `net_flow` combina acumulados de dos cuentas distintas. No se corrigen porque el modelo se entrenó así.
