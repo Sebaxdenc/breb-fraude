@@ -1,5 +1,6 @@
-# syntax=docker/dockerfile:1
 # Imagen única de Spark para el master, los workers, los jobs y las herramientas.
+# Sin línea "# syntax=": esa directiva descarga el frontend de BuildKit de Docker Hub en cada build.
+# El Dockerfile no usa funciones que no traiga el frontend incluido en Docker.
 # Python 3.11 + numpy 1.26 (PySpark 3.5 no admite numpy 2), Java 17, Delta 3.3.3 y conectores S3A y Kafka.
 # Contexto de build: la raíz del repositorio (ver infra/docker-compose.yml).
 
