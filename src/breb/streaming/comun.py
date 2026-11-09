@@ -45,6 +45,26 @@ ESQUEMA_EVENTO = T.StructType([
 ])
 
 
+def comprobar_servicios(**destinos: str | None) -> None:
+    """Falla en segundos si un servicio no responde, en lugar de dejar que S3A o Kafka reintenten durante
+    minutos. `destinos`: nombre=URL o host:puerto (se toma el primero si hay varios separados por coma)."""
+    import socket
+    from urllib.parse import urlparse
+    caidos = []
+    for nombre, destino in destinos.items():
+        if not destino:
+            continue
+        d = destino.split(",")[0].strip()
+        u = urlparse(d if "://" in d else f"tcp://{d}")
+        try:
+            socket.create_connection((u.hostname, u.port or 80), timeout=5).close()
+        except OSError as e:
+            caidos.append(f"{nombre} ({u.hostname}:{u.port}): {e}")
+    if caidos:
+        raise SystemExit("No responden: " + "; ".join(caidos) + ".\nLevanten la infraestructura con "
+                         "'docker compose up -d' (dentro de infra) y vuelvan a intentar.")
+
+
 def sesion(nombre: str) -> SparkSession:
     spark = SparkSession.builder.appName(nombre).getOrCreate()
     spark.sparkContext.setLogLevel(os.environ.get("BREB_LOG", "WARN"))

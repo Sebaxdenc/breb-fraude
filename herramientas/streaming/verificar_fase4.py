@@ -21,7 +21,7 @@ from pymongo import MongoClient
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 
-from breb.streaming.comun import BRONZE, KAFKA, METRICAS, RISK_DECISIONS, SILVER, TOPICO
+from breb.streaming.comun import BRONZE, KAFKA, METRICAS, RISK_DECISIONS, SILVER, TOPICO, comprobar_servicios
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--referencia", default="/opt/breb/modelo/aml_xgb/golden_sample.parquet",
@@ -30,6 +30,8 @@ ap.add_argument("--meta", default="/opt/breb/modelo/aml_xgb/model_meta.json")
 ap.add_argument("--datos", default="/datos/productor", help="eventos_test.parquet y scores_test.parquet")
 ap.add_argument("--esperar", type=int, default=120, help="segundos máximos esperando a que los jobs se pongan al día")
 a = ap.parse_args()
+comprobar_servicios(SeaweedFS=os.environ.get("S3_ENDPOINT"), Kafka=KAFKA,
+                    MongoDB=os.environ.get("MONGO_MIEMBROS"))
 
 spark = (SparkSession.builder.appName("verificar-fase4").master("local[2]")
          .config("spark.ui.enabled", "false").getOrCreate())
