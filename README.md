@@ -136,7 +136,7 @@ docker compose run --rm spark-cliente spark-submit /opt/breb/herramientas/stream
 ```
 Gold (Job 4), con los jobs de streaming apagados para liberar memoria:
 ```powershell
-docker compose --profile streaming stop
+docker compose stop job1-bronze job2-riesgo job2-ventanas job3-silver
 docker compose run --rm spark-cliente spark-submit --master local[2] --driver-memory 2g /opt/breb/jobs/job4_gold.py
 ```
 Termina en `JOB 4 OK`, con los controles de calidad y la precisión y el recall de las alertas contra las etiquetas reales.
@@ -147,6 +147,7 @@ Termina en `JOB 4 OK`, con los controles de calidad y la precisión y el recall 
 ### Problemas comunes
 - **`lookup production.cloudfront.docker.com: no such host`** al descargar imágenes: Windows no resolvió el dominio del que Docker Hub sirve las capas. Repetir `docker compose pull`. Si sigue fallando, comparar `Resolve-DnsName production.cloudfront.docker.com` con `Resolve-DnsName production.cloudfront.docker.com -Server 1.1.1.1`. Si solo el segundo responde, el DNS de la red falla: cambiar el DNS del adaptador a `1.1.1.1` y `8.8.8.8` (Configuración → Red e Internet → Wi-Fi → Propiedades de hardware → Asignación de servidor DNS) o usar otra red, y reiniciar Docker Desktop.
 - **`No writable volumes and no free volumes left`** en el log de SeaweedFS, o Spark reintentando escrituras durante minutos: SeaweedFS se quedó sin volúmenes para un bucket. `WEED_MASTER_VOLUME_GROWTH_COPY_1=1` en `docker-compose.yml` lo evita; si pasa, liberar disco en Windows o borrar los datos de prueba con `docker compose down -v`.
+- **`seaweedfs: Name or service not known`** (o `kafka-1`, `mongo-1`): la infraestructura está apagada. `docker compose --profile streaming stop` apaga **todos** los servicios, no solo los jobs; para apagar solo los jobs: `docker compose stop job1-bronze job2-riesgo job2-ventanas job3-silver`. Se recupera con `docker compose up -d`; los datos se conservan.
 - **`image "docker.io/library/breb-spark:local": already exists`** al construir: pasaba cuando varios servicios tenían la misma sección `build`. Ahora solo `spark-master` construye la imagen y los demás la reutilizan.
 
 ## Artefactos del modelo

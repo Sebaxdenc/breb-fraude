@@ -240,6 +240,13 @@ services:
     <<: *spark
     profiles: [herramientas]
     restart: "no"
+    # `docker compose run` levanta estos servicios si están apagados
+    depends_on: &infra-base
+      seaweedfs: {condition: service_healthy}
+      dynamodb-local: {condition: service_started}
+      moto: {condition: service_started}
+      kafka-1: {condition: service_healthy}
+      mongo-1: {condition: service_healthy}
     env_file: [credenciales/s3.env, credenciales/mongo-app.env]
     environment:
       <<: *spark-env
@@ -262,6 +269,9 @@ services:
     environment:
       SNS_ENDPOINT: http://moto:5000
       MONGO_MIEMBROS: ${MONGO_MIEMBROS}
+    depends_on:
+      moto: {condition: service_started}
+      mongo-1: {condition: service_healthy}
     entrypoint: ["/usr/bin/tini", "--", "python", "-m", "breb.entidad"]
     command: ["--analistas"]
     volumes: ["../datos:/datos:ro"]
@@ -336,6 +346,8 @@ services:
       dockerfile: infra/productor/Dockerfile
     profiles: [herramientas]
     restart: "no"
+    depends_on:
+      kafka-1: {condition: service_healthy}
     environment:
       KAFKA_BOOTSTRAP: ${KAFKA_BOOTSTRAP}
     volumes: ["../datos:/datos"]

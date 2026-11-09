@@ -28,7 +28,7 @@ from pyspark.errors import AnalysisException
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
-from breb.streaming.comun import RISK_DECISIONS, SILVER
+from breb.streaming.comun import RISK_DECISIONS, SILVER, comprobar_servicios
 
 GOLD = os.environ.get("BREB_GOLD", "s3a://lakehouse-gold/analytics")
 ETIQUETAS_LOCAL = os.environ.get("BREB_ETIQUETAS", "/datos/productor/etiquetas_test.parquet")
@@ -249,6 +249,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--sin-calidad", action="store_true")
     a = ap.parse_args()
+    comprobar_servicios(SeaweedFS=os.environ.get("S3_ENDPOINT"), DynamoDB=os.environ.get("DYNAMODB_ENDPOINT"))
     spark = SparkSession.builder.appName("job4-gold").getOrCreate()
     spark.sparkContext.setLogLevel(os.environ.get("BREB_LOG", "WARN"))
     spark.conf.set("spark.sql.shuffle.partitions", os.environ.get("JOB4_PARTICIONES", "4"))
