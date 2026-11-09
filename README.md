@@ -61,7 +61,7 @@ Pensado para el equipo de la demo: Windows 11, 16 GB de RAM, Docker Desktop con 
 
 Para sumar `consumo` a `completo` hay que nombrar los dos perfiles: `docker compose --env-file completo.env --profile completo --profile consumo up -d`. Con un `--profile` en la línea de comandos, Compose ignora el `COMPOSE_PROFILES` de `completo.env`: con solo `--profile consumo` quedaría 1 bróker con la configuración de 3, y `kafka-init` fallaría.
 
-Los topes de memoria de los contenedores suman 8,0 GiB en `dev`, 12,1 GiB en `completo` y 4,1 GiB más con `consumo`. Son máximos, no reservas: el consumo real hay que medirlo con `docker stats` (riesgo R5). Con la prueba de Delta corriendo, el perfil `completo` usó 4,59 GiB de los 11,68 GiB de WSL. `completo` y `consumo` juntos suman 16,2 GiB de topes; la decisión D5 del plan propone usar `dev` + `consumo` para la demo.
+Los topes de memoria de los contenedores suman 8,0 GiB en `dev`, 12,1 GiB en `completo` y 4,6 GiB más con `consumo`. Son máximos, no reservas: el consumo real hay que medirlo con `docker stats` (riesgo R5). Con la prueba de Delta corriendo, el perfil `completo` usó 4,59 GiB de los 11,68 GiB de WSL. Con `dev` + `consumo`, después de `prueba_consulta.py`, el total fue 4,03 GiB. `completo` y `consumo` juntos suman 16,7 GiB de topes; la decisión D5 del plan propone usar `dev` + `consumo` para la demo.
 
 En el perfil completo, **todos** los comandos de `docker compose` llevan `--env-file completo.env`. Para cambiar de perfil hay que borrar los volúmenes: el quórum de Kafka y el replica set quedan guardados en ellos.
 ```powershell
