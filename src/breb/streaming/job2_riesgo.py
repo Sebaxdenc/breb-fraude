@@ -1,13 +1,22 @@
 """Job 2 · riesgo + XGBoost (RF3, RF4, RF10, RF13, RF14, RNF-02, RNF-03).
 
-Lee Kafka directamente (sin pasar por el Job 1) y corre tres consultas en la misma aplicación:
+Lee Kafka directamente (sin pasar por el Job 1). Corre en dos aplicaciones de Spark, cada una con sus
+propios núcleos, para que las ventanas del RF3 no le quiten ejecutores a las decisiones:
 
+`main` (servicio job2-riesgo):
 - `job2_decisiones` (trigger de 1 s): validación del contrato → dropDuplicatesWithinWatermark por
   transaction_uuid → foreachBatch. En el driver, `breb.job2.microbatch.procesar_microbatch` lee el estado
   de MongoDB, calcula las 58 variables en orden de seq, puntúa y escribe el estado nuevo. Después se
-  publican las alertas en SNS y se agrega una fila por transacción a risk_decisions, con txnAppId/txnVersion
-  para que un reintento del micro-batch no duplique filas. decision_ts se toma después de publicar en SNS:
-  la latencia del RNF-02 es decision_ts − kafka_timestamp (LogAppendTime) y queda en latencia_ms.
+  publican las alertas en SNS. decision_ts se toma en ese momento: la latencia del RNF-02 es
+  decision_ts − kafka_timestamp (LogAppendTime) y queda en latencia_ms. Por último, las filas de
+  risk_decisions del micro-batch se guardan en un archivo Parquet local en el volumen de checkpoints.
+- `job2_risk_decisions` (trigger de 10 s): lee esos archivos como fuente de streaming y los agrega a la tabla
+  Delta risk_decisions en un solo commit por trigger (RF13). Escribir en Delta tardaba de 6 a 19 s por commit
+  en el equipo de la demo; así ese tiempo sale del camino de la decisión. La fuente de archivos y el sink de
+  Delta son exactly-once con su checkpoint: si se reintenta un micro-batch, el archivo se reescribe con el
+  mismo nombre y no se vuelve a leer.
+
+`main_ventanas` (servicio job2-ventanas):
 - `job2_ventanas_envio` y `job2_ventanas_recepcion` (RF3, output mode update, trigger de 30 s): ventanas
   deslizantes de 5 min por cuenta ordenante y de 10 min por cuenta receptora, con salto de 1 min y
   watermark de 2 min. La ventana de los últimos minutos de cada cuenta se guarda en su perfil de MongoDB
@@ -25,8 +34,9 @@ import time
 from datetime import datetime, timezone
 
 import boto3
-import numpy as np
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 from pymongo import MongoClient, UpdateOne
 from pyspark.sql import DataFrame, Window
 from pyspark.sql import functions as F
@@ -40,6 +50,8 @@ from breb.streaming.comun import (CHECKPOINTS, RISK_DECISIONS, con_evento, leer_
 
 DIR_MODELO = os.environ.get("BREB_DIR_MODELO", "/opt/breb/modelo/aml_xgb")
 TOPICO_SNS = os.environ.get("BREB_TOPICO_SNS", "fraud-alerts-critical")
+# Directorio local (volumen compartido con los workers) de los archivos de risk_decisions por micro-batch
+PENDIENTES = os.environ.get("BREB_DECISIONES_PENDIENTES", "/checkpoints/job2_decisiones_pendientes")
 
 ESQUEMA_DECISIONES = T.StructType([
     T.StructField("transaction_uuid", T.StringType()), T.StructField("seq", T.LongType()),
@@ -53,6 +65,42 @@ ESQUEMA_DECISIONES = T.StructType([
     T.StructField("latencia_ms", T.DoubleType()), T.StructField("year", T.IntegerType()),
     T.StructField("month", T.IntegerType()), T.StructField("day", T.IntegerType()),
 ])
+
+
+_ARROW = {T.StringType: pa.string(), T.LongType: pa.int64(), T.IntegerType: pa.int32(),
+          T.DoubleType: pa.float64(), T.TimestampType: pa.timestamp("us", tz="UTC")}
+
+
+def _tipo_arrow(tipo):
+    return pa.list_(_tipo_arrow(tipo.elementType)) if isinstance(tipo, T.ArrayType) else _ARROW[type(tipo)]
+
+
+ESQUEMA_ARROW = pa.schema([(c.name, _tipo_arrow(c.dataType)) for c in ESQUEMA_DECISIONES])
+
+
+def escribir_pendiente(dec: pd.DataFrame, batch_id: int, directorio: str = PENDIENTES) -> str:
+    """Guarda las filas de risk_decisions del micro-batch. Escribe con un nombre que empieza por "_" (Spark
+    ignora esos archivos) y lo renombra al final, para que la fuente nunca lea un archivo a medias.
+    Las marcas de tiempo van en microsegundos y en UTC (las de pandas están en UTC sin zona)."""
+    os.makedirs(directorio, exist_ok=True)
+    final = os.path.join(directorio, f"batch_{batch_id:012d}.parquet")
+    temporal = os.path.join(directorio, f"_batch_{batch_id:012d}.parquet.tmp")
+    tabla = pa.Table.from_pandas(dec[ESQUEMA_ARROW.names], schema=ESQUEMA_ARROW, preserve_index=False, safe=False)
+    pq.write_table(tabla, temporal)
+    os.replace(temporal, final)
+    return final
+
+
+def consulta_risk_decisions(spark, disparo: dict | None = None):
+    """Archivos de PENDIENTES → tabla Delta risk_decisions, un commit por trigger (RF13)."""
+    os.makedirs(PENDIENTES, exist_ok=True)
+    spark.sparkContext.setLocalProperty("spark.scheduler.pool", "registro")
+    return (spark.readStream.schema(ESQUEMA_DECISIONES).option("cleanSource", "delete")
+            .parquet(f"file://{PENDIENTES}")
+            .writeStream.queryName("job2_risk_decisions").format("delta").outputMode("append")
+            .option("checkpointLocation", f"{CHECKPOINTS}/job2_risk_decisions")
+            .trigger(**(disparo or {"processingTime": os.environ.get("JOB2_TRIGGER_REGISTRO", "10 seconds")}))
+            .start(RISK_DECISIONS))
 
 
 def cliente_mongo() -> MongoClient:
@@ -103,19 +151,15 @@ def consulta_decisiones(spark, eventos: DataFrame):
         ts = pd.to_datetime(dec["event_ts"])
         dec["year"], dec["month"], dec["day"] = ts.dt.year, ts.dt.month, ts.dt.day
         dec["variables"] = [list(map(float, v)) for v in dec["variables"]]
-        filas = spark.createDataFrame(dec[[c.name for c in ESQUEMA_DECISIONES]].astype(
-            {"seq": np.int64, "entidad": np.int64, "entidad_destino": np.int64, "batch_id": np.int64,
-             "kafka_partition": np.int32, "kafka_offset": np.int64, "year": np.int32, "month": np.int32,
-             "day": np.int32}), ESQUEMA_DECISIONES)
-        # Sin partitionBy: un solo archivo por micro-batch (la tabla tiene una fila por transacción y se
-        # compacta con OPTIMIZE en el DAG); year, month y day quedan como columnas para filtrar.
-        (filas.write.format("delta").mode("append")
-         .option("txnAppId", "job2_risk_decisions").option("txnVersion", batch_id).save(RISK_DECISIONS))
+        escribir_pendiente(dec, batch_id)
         t4 = time.perf_counter()
+        tp = r.tiempos
         print(f"[job2] batch {batch_id}: {len(dec)} transacciones, {len(r.alertas)} alertas, "
-              f"latencia p99 {dec['latencia_ms'].quantile(0.99):.0f} ms | lectura {1000 * (t1 - t0):.0f} ms, "
-              f"variables+modelo+MongoDB {1000 * (t2 - t1):.0f} ms, SNS {1000 * (t3 - t2):.0f} ms, "
-              f"risk_decisions {1000 * (t4 - t3):.0f} ms", flush=True)
+              f"latencia p50 {dec['latencia_ms'].median():.0f} ms, p99 {dec['latencia_ms'].quantile(0.99):.0f} ms | "
+              f"lectura {1000 * (t1 - t0):.0f} ms, MongoDB lectura {tp['mongo_lectura']:.0f} ms, "
+              f"variables {tp['variables']:.0f} ms, modelo {tp['modelo']:.0f} ms, "
+              f"MongoDB escritura {tp['mongo_escritura']:.0f} ms, SNS {1000 * (t3 - t2):.0f} ms, "
+              f"archivo {1000 * (t4 - t3):.0f} ms", flush=True)
 
     dedup = (eventos.withWatermark("event_time", os.environ.get("JOB2_WATERMARK_DEDUP", "1 hour"))
              .dropDuplicatesWithinWatermark(["transaction_uuid"]))
@@ -188,6 +232,7 @@ def eventos_para_ventanas(spark, maximo: int) -> DataFrame:
 
 
 def main() -> None:
+    """Decisiones y risk_decisions (servicio job2-riesgo)."""
     spark = sesion("job2-riesgo")
     registrar_metricas(spark, "job2")
     # Sin tope por defecto: con maxOffsetsPerTrigger, Spark reparte el tope entre particiones y un micro-batch
@@ -197,8 +242,15 @@ def main() -> None:
     maximo = int(os.environ.get("JOB2_MAX_OFFSETS", "0")) or None
     eventos = con_evento(validar(leer_kafka(spark, max_offsets=maximo)).where("is_valid"))
     consulta_decisiones(spark, eventos)
-    if os.environ.get("JOB2_VENTANAS", "1") == "1":
-        consultas_ventanas(eventos_para_ventanas(spark, maximo))
+    consulta_risk_decisions(spark)
+    spark.streams.awaitAnyTermination()
+
+
+def main_ventanas() -> None:
+    """Ventanas del RF3 (servicio job2-ventanas)."""
+    spark = sesion("job2-ventanas")
+    registrar_metricas(spark, "job2")
+    consultas_ventanas(eventos_para_ventanas(spark, int(os.environ.get("JOB2_MAX_OFFSETS", "0")) or None))
     spark.streams.awaitAnyTermination()
 
 

@@ -14,7 +14,7 @@ Orden de efectos en el micro-batch B (RNF-03):
 """
 from __future__ import annotations
 
-import copy
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -35,6 +35,7 @@ class ResultadoLote:
     alertas: list[dict] = field(default_factory=list)
     variables: pd.DataFrame | None = None
     documentos_escritos: int = 0
+    tiempos: dict = field(default_factory=dict)   # ms por tramo: mongo_lectura, variables, modelo, mongo_escritura
 
 
 def _ahora_iso() -> str:
@@ -69,13 +70,22 @@ def procesar_microbatch(eventos: pd.DataFrame, batch_id: int, almacen, puntuador
     claves = (set(df["from_node_key"]) | set(df["to_node_key"]),
               {clave_par(f, t) for f, t in zip(df["from_node_key"], df["to_node_key"])},
               {str(b) for b in df["from_bank"]} | {str(b) for b in df["to_bank"]})
+    t0 = time.perf_counter()
     cargados = almacen.cargar(claves, batch_id)
-    iniciales = copy.deepcopy(cargados)
+    t1 = time.perf_counter()
+    # Copia del estado previo para streaming_prev. Cada estado es un dict plano de números, así que basta
+    # copiar cada dict (con 30.000 cuentas, deepcopy tarda 240 ms y esto 14 ms).
+    iniciales = tuple({k: dict(v) for k, v in tabla.items()} for tabla in cargados)
     motor = MotorVariables(*cargados)
     crudas = motor.procesar(df)
     variables = derivar(df, crudas, puntuador.num)
+    t2 = time.perf_counter()
     score = puntuador.puntuar(variables, df[puntuador.cat])
+    t3 = time.perf_counter()
     escritos = almacen.guardar(motor, iniciales, batch_id, limite=limite_escritura)
+    t4 = time.perf_counter()
+    tiempos = {"mongo_lectura": 1000 * (t1 - t0), "variables": 1000 * (t2 - t1), "modelo": 1000 * (t3 - t2),
+               "mongo_escritura": 1000 * (t4 - t3)}
 
     decision_ts = decision_ts or _ahora_iso()
     alerta = score >= puntuador.umbral
@@ -119,4 +129,5 @@ def procesar_microbatch(eventos: pd.DataFrame, batch_id: int, almacen, puntuador
                     int(v["sender_inflow_gap_sec"]) if v["sender_has_prior_inflow"] else None,
             },
         })
-    return ResultadoLote(decisiones=decisiones, alertas=alertas, variables=variables, documentos_escritos=escritos)
+    return ResultadoLote(decisiones=decisiones, alertas=alertas, variables=variables, documentos_escritos=escritos,
+                         tiempos=tiempos)
