@@ -12,9 +12,9 @@ Plan para construir la arquitectura del Entregable 1 v2.0 (`documento/Entregable
 | 2. Infraestructura local | S13 | 16 de 17 |
 | 3. Ingesta | S13–S14 | 7 de 7 |
 | 4. Streaming | S14 | 12 de 13 |
-| 5. Batch y orquestación | S15 | 0 de 6 |
+| 5. Batch y orquestación | S15 | 2 de 7 |
 | 6. Consumo y gobernanza | S15 | 2 de 7 |
-| 7. Pruebas y endurecimiento | S16 | 1 de 8 |
+| 7. Pruebas y endurecimiento | S16 | 3 de 9 |
 | 8. Documento y sustentación | S16 | 0 de 6 |
 
 ## Camino a la demo de punta a punta
@@ -99,8 +99,9 @@ Criterio del hito S14: un evento llega a Bronze, Silver y MongoDB; el Job 2 publ
 - [ ] Latencia del RNF-02 en Docker (pospuesta, ver D6)
 
 ## Fase 5 · Batch y orquestación (S15)
-- [ ] Job 4: Gold en estrella (`Fact_Transferencias`, `Dim_Cuenta` SCD 2, `Dim_Entidad_Financiera`, `Dim_Canal`, `Dim_Tiempo`) con MERGE (RF7)
-- [ ] Carga de las etiquetas `Is Laundering` a Gold para medir precisión y recall
+- [x] Job 4 (`src/breb/batch/job4_gold.py`): `fact_transferencias`, `dim_cuenta` (SCD 2 sobre entidad y nivel de riesgo), `dim_entidad_financiera`, `dim_canal` y `dim_tiempo` en `lakehouse-gold/analytics/`, incremental con MERGE e idempotente; completa las decisiones que llegan tarde. Probado sin Docker con Spark local (RF7)
+- [ ] Job 4 en Docker con el tramo de la demo
+- [x] Carga de las etiquetas `Is Laundering` a Gold (`etiquetas`) y controles de calidad en el Job 4: Silver completo en los hechos, claves no nulas, integridad con `dim_tiempo`, una versión vigente por cuenta, y precisión y recall de las alertas; cada ejecución queda en `ejecuciones`
 - [ ] DAG `breb_lakehouse_pipeline` cada 15 min: sensores → dimensiones → hechos → calidad → sincronización a MongoDB → OPTIMIZE y VACUUM (RF9)
 - [ ] DAG `reprocess_quarantine` bajo demanda (RF12)
 - [ ] DAG `bootstrap_state`: `breb.estado.inicial.calcular` + `AlmacenMongo.cargar_estado_inicial` (RF8)
@@ -117,7 +118,8 @@ Criterio del hito S14: un evento llega a Bronze, Silver y MongoDB; el Job 2 publ
 
 ## Fase 7 · Pruebas y endurecimiento (S16)
 - [x] Tramo de la demo (`python -m breb.estado tramo`): puntúa todo el test con el motor del Job 2, compara PR-AUC, verdaderos y falsos positivos con el notebook, y elige las N transacciones consecutivas con más alertas. `cargar --desde-seq` deja el estado justo antes de ese tramo. Con los datos sintéticos, el PR-AUC salió idéntico al del notebook
-- [ ] Tramo de la demo con LI-Small real: PR-AUC del test completo igual a 0,2674 y corrida de punta a punta con alertas
+- [x] Tramo de la demo con LI-Small real: en el test completo, el motor del Job 2 da PR-AUC de 0,26744793163262176 (el notebook, 0,2674479316326217), 264 alertas, 141 verdaderos positivos, 123 falsos positivos y 476 falsos negativos, igual que en Kaggle. Tramo: 15.000 transacciones desde el seq 6.814.261, con 25 alertas (13 de lavado real)
+- [x] Corrida de punta a punta del tramo en Docker: Bronze, Silver y `risk_decisions` con 15.000 de 15.000; score idéntico a la puntuación fuera de línea en 15.000 de 15.000; los analistas recibieron las 25 alertas y la entidad 12 bloqueó las dos cuentas ordenantes de sus alertas. Latencia: p99 de 53 s a 50 ev/s; fuente → Kafka con p99 de 5,5 s mientras corrían los jobs (D6)
 - [ ] Prueba de carga por escalones en el equipo de la demo; declarar la tasa con 30 % de margen (RNF-01, RNF-02)
 - [ ] Falla de un bróker durante la carga (RNF-01, RNF-03)
 - [ ] Falla de un ejecutor de Spark (RNF-05)
@@ -138,7 +140,7 @@ Criterio del hito S14: un evento llega a Bronze, Silver y MongoDB; el Job 2 publ
 ## Decisiones pendientes
 | # | Decisión | Opciones | Hito |
 |---|---|---|---|
-| D6 | Latencia del Job 2 (RNF-02) · **pospuesta** | Segunda corrida: p99 de 99 s. En micro-batches de 1.400 a 4.800 transacciones, variables y modelo tardan menos de 0,5 s; el tiempo se va en leer Kafka con la validación en Python (de 2,7 a 62 s) y en MongoDB (de 0,9 a 6,9 s para leer y de 2,5 a 12,4 s para escribir). Ideas, en orden: (1) validar el contrato con expresiones de Spark en lugar de la pandas UDF con jsonschema, en los Jobs 1 y 2; (2) MongoDB con 2 GB de caché, escribir solo los campos que cambian en vez de `streaming` y `streaming_prev` completos, y revisar con `mongostat` si el cuello es el disco de WSL; (3) triggers de 60 s para los Jobs 1 y 3 durante la demo; (4) declarar una tasa de demo más baja o medir en Linux nativo con más núcleos | S16 |
+| D6 | Latencia del Job 2 (RNF-02) · **pospuesta** | Segunda corrida: p99 de 99 s. En micro-batches de 1.400 a 4.800 transacciones, variables y modelo tardan menos de 0,5 s; el tiempo se va en leer Kafka con la validación en Python (de 2,7 a 62 s) y en MongoDB (de 0,9 a 6,9 s para leer y de 2,5 a 12,4 s para escribir). En la corrida del tramo, a 50 ev/s, el p99 fue de 53 s y el productor vio p99 de 5,5 s hacia Kafka mientras corrían los jobs: el equipo está saturado. Ideas, en orden: (1) validar el contrato con expresiones de Spark en lugar de la pandas UDF con jsonschema, en los Jobs 1 y 2; (2) MongoDB con 2 GB de caché, escribir solo los campos que cambian en vez de `streaming` y `streaming_prev` completos, y revisar con `mongostat` si el cuello es el disco de WSL; (3) triggers de 60 s para los Jobs 1 y 3 durante la demo; (4) declarar una tasa de demo más baja o medir en Linux nativo con más núcleos | S16 |
 | D4 | Estado inicial en el equipo de 16 GB | Calcularlo en Python pide unos 5,5 GB, que no caben junto al stack completo. Opciones: calcularlo en Kaggle y exportar los documentos (unos 390 MB sin comprimir) para que el DAG `bootstrap_state` solo los cargue; correr el DAG con el resto del stack apagado; o bajar la memoria de `cargar` y `procesar` (tipos categóricos, sin guardar las variables crudas) | S15 |
 | D5 | Perfiles para la demo | Propuesta: la demo de punta a punta corre `dev` + `consumo` (y Airflow); las pruebas de falla corren `completo` sin `consumo`. Juntos, los topes de memoria suman 16,7 GiB frente a 11,68 GiB de WSL; `dev` + `consumo` usaron 4,03 GiB en reposo. Se decide con la RAM medida en la fase 7 | S16 |
 

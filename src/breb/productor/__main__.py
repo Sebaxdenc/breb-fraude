@@ -32,6 +32,8 @@ def main() -> int:
     q.add_argument("--continuar", action="store_true",
                    help="seguir después del último seq publicado (productor/progreso.json)")
     q.add_argument("--max", type=int, help="máximo de transacciones a publicar")
+    q.add_argument("--tramo", action="store_true",
+                   help="publicar el tramo de la demo (desde_seq y transacciones de productor/tramo_demo.json)")
     q.add_argument("--semilla", type=int, default=7)
     q.add_argument("--informe", help="JSON con las mediciones (por defecto mediciones/productor_<fecha>.json)")
     a = ap.parse_args()
@@ -43,6 +45,10 @@ def main() -> int:
 
     progreso = pathlib.Path(a.eventos).parent / "progreso.json"
     desde = a.desde_seq
+    if a.tramo:
+        tramo = json.loads((pathlib.Path(a.eventos).parent / "tramo_demo.json").read_text())["tramo"]
+        desde, a.max = tramo["desde_seq"], a.max or tramo["transacciones"]
+        print(f"tramo de la demo: {a.max:,} transacciones desde seq {desde} ({tramo['alertas']} alertas esperadas)")
     if a.continuar:
         if not progreso.exists():
             print(f"no existe {progreso}: se publica desde el principio")

@@ -28,6 +28,7 @@ def main() -> int:
     c.add_argument("--modelo", default=os.environ.get("BREB_DIR_MODELO", "/opt/breb/modelo/aml_xgb"))
     c.add_argument("--reemplazar", action="store_true", help="borra cuentas, pares y bancos antes de cargar")
     c.add_argument("--desde-seq", type=int, help="estado hasta este seq (tramo de la demo)")
+    c.add_argument("--tramo", action="store_true", help="estado hasta el inicio del tramo (productor/tramo_demo.json)")
     t = sub.add_parser("tramo", help="puntúa el test completo y elige el tramo de la demo")
     t.add_argument("--csv", default=os.path.join(os.environ.get("BREB_DATOS", "/datos"), "LI-Small_Trans.csv"))
     t.add_argument("--modelo", default=os.environ.get("BREB_DIR_MODELO", "/opt/breb/modelo/aml_xgb"))
@@ -45,7 +46,7 @@ def main() -> int:
         print(json.dumps(tramo, indent=2, ensure_ascii=False))
         igual = metricas["pr_auc_notebook"] is not None and abs(metricas["pr_auc"] - metricas["pr_auc_notebook"]) < 1e-9
         print("PR-AUC igual al del notebook" if igual else "PR-AUC DISTINTO al del notebook: revisar")
-        print(f"siguiente paso: python -m breb.estado cargar --reemplazar --desde-seq {tramo['desde_seq']}")
+        print("siguiente paso: python -m breb.estado cargar --tramo")
         return 0 if igual else 1
 
     cliente = MongoClient(f"mongodb://{os.environ['MONGO_MIEMBROS']}/?replicaSet=rs0&authSource=admin",
@@ -60,6 +61,11 @@ def main() -> int:
     for n in ocupadas:
         db[n].drop()
 
+    if a.tramo:
+        ruta_tramo = os.path.join(os.environ.get("BREB_DATOS", "/datos"), "productor", "tramo_demo.json")
+        with open(ruta_tramo) as fh:
+            a.desde_seq = json.load(fh)["tramo"]["desde_seq"]
+        print(f"estado hasta el inicio del tramo de la demo: seq {a.desde_seq}")
     motor, resumen = calcular(a.csv, a.modelo, a.desde_seq)
     print(json.dumps(resumen, ensure_ascii=False), flush=True)
     gc.collect()

@@ -253,7 +253,7 @@ services:
     volumes: ["../datos:/datos"]
     command: ["bash"]
 
-  # Consumidores de alertas (RF15): docker compose run --rm entidad --entidades 70,12  |  --analistas
+  # Consumidores de alertas (RF15): docker compose run --rm entidad {--tramo | --entidades 20,12 | --analistas}
   entidad:
     <<: *spark
     profiles: [herramientas]
@@ -264,6 +264,7 @@ services:
       MONGO_MIEMBROS: ${MONGO_MIEMBROS}
     entrypoint: ["/usr/bin/tini", "--", "python", "-m", "breb.entidad"]
     command: ["--analistas"]
+    volumes: ["../datos:/datos:ro"]
     deploy:
       resources:
         limits: {cpus: "0.5", memory: 256m}

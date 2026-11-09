@@ -115,26 +115,31 @@ docker compose run --rm spark-cliente spark-submit /opt/breb/herramientas/stream
 Para seguir publicando sin volver a cargar el estado, se deja el stack arriba y se publica con `--continuar`: los jobs siguen desde sus checkpoints y el productor desde el último `seq`.
 
 ### Demo con alertas (tramo)
-Con el umbral del modelo hay en promedio una alerta cada 3.900 transacciones, y en las primeras 50.000 del test solo una. La demo arranca en el tramo con más alertas:
+Con el umbral del modelo hay en promedio una alerta cada 3.900 transacciones. La demo arranca en el tramo de 15.000 transacciones con más alertas (25 en LI-Small), que `tramo` elige y guarda en `datos/productor/tramo_demo.json`; `cargar`, `entidad` y `publicar` lo leen con `--tramo`.
 ```powershell
-docker compose --profile streaming down -v                         # todo vacío: la demo empieza en el tramo
+docker compose --profile streaming down -v                          # todo vacío: la demo empieza en el tramo
 docker compose build
 docker compose up -d
-docker compose run --rm spark-cliente python -m breb.estado tramo   # unos 6 GB y 5 min: PR-AUC del test y tramo
-docker compose run --rm spark-cliente python -m breb.estado cargar --desde-seq <desde_seq del tramo>
+docker compose run --rm spark-cliente python -m breb.estado tramo    # solo la primera vez: 6 GB y 5 min
+docker compose run --rm spark-cliente python -m breb.estado cargar --tramo
 docker compose --profile streaming up -d
 ```
 En otras dos ventanas de PowerShell (dentro de `infra`), los consumidores de las alertas:
 ```powershell
-docker compose run --rm entidad --entidades <entidades_con_mas_alertas, separadas por coma>
-docker compose run --rm entidad --analistas
+docker compose run --rm entidad --tramo        # las 5 entidades con más alertas del tramo
+docker compose run --rm entidad --analistas    # todas las alertas
 ```
 Y en la primera, después de un minuto:
 ```powershell
-docker compose run --rm productor publicar --desde-seq <desde_seq> --max 15000 --escalones "50:300"
+docker compose run --rm productor publicar --tramo --escalones "50:300"
 docker compose run --rm spark-cliente spark-submit /opt/breb/herramientas/streaming/verificar_fase4.py --esperar 900
 ```
-`tramo` deja en `datos/productor/` el tramo elegido (`tramo_demo.json`) y la puntuación de todo el test (`scores_test.parquet`); `verificar_fase4.py` compara con esa puntuación cada score del Job 2.
+Gold (Job 4), con los jobs de streaming apagados para liberar memoria:
+```powershell
+docker compose --profile streaming stop
+docker compose run --rm spark-cliente spark-submit --master local[2] --driver-memory 2g /opt/breb/jobs/job4_gold.py
+```
+Termina en `JOB 4 OK`, con los controles de calidad y la precisión y el recall de las alertas contra las etiquetas reales.
 
 ### Apagar
 `docker compose down` detiene todo y conserva los datos; `docker compose down -v` también borra los volúmenes.
