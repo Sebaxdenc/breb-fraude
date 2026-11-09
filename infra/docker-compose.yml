@@ -129,6 +129,10 @@ services:
     # AWS_ACCESS_KEY_ID y AWS_SECRET_ACCESS_KEY crean la única identidad con permisos sobre S3.
     command: ["server", "-s3", "-s3.port=8333", "-ip=seaweedfs", "-ip.bind=0.0.0.0"]
     env_file: [credenciales/s3.env]
+    # Cada bucket es una colección y SeaweedFS le reserva 7 volúmenes al crearla: con los tres buckets
+    # y poco disco libre se queda sin volúmenes ("No writable volumes"). Con 1 crece solo cuando se llena.
+    environment:
+      WEED_MASTER_VOLUME_GROWTH_COPY_1: "1"
     ports: ["127.0.0.1:8333:8333"]
     volumes: [seaweedfs-datos:/data]
     healthcheck:
@@ -215,6 +219,8 @@ services:
       <<: *spark-env
       SPARK_MASTER_URL: spark://spark-master:7077
       KAFKA_BOOTSTRAP: kafka-1:9092
+      TRINO_URL: http://trino:8080
+      METABASE_URL: http://metabase:3000
       MONGO_MIEMBROS: ${MONGO_MIEMBROS}
     command: ["bash"]
 
@@ -262,6 +268,101 @@ services:
     entrypoint: ["mongosh", "--quiet", "mongodb://127.0.0.1:27017/?directConnection=true",
                  "--file", "/scripts/iniciar_replica.js"]
 
+  # ---------------------------------------------------------------- Consumo: catálogo, SQL y tableros (RF11)
+  # Perfil consumo: docker compose --profile consumo up -d
+  postgres:
+    image: postgres:15.19-bookworm
+    profiles: [consumo]
+    restart: unless-stopped
+    env_file: [credenciales/postgres.env, credenciales/hms-db.env, credenciales/metabase-db.env]
+    volumes:
+      - postgres-datos:/var/lib/postgresql/data
+      - ./postgres/iniciar_bases.sh:/docker-entrypoint-initdb.d/10-bases.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    deploy:
+      resources:
+        limits: {cpus: "0.5", memory: 384m}
+
+  hive-metastore:
+    image: breb-hms:local
+    pull_policy: never
+    build:
+      context: ..
+      dockerfile: infra/hms/Dockerfile
+    profiles: [consumo]
+    restart: unless-stopped
+    hostname: hive-metastore
+    depends_on:
+      postgres: {condition: service_healthy}
+      seaweedfs: {condition: service_healthy}
+    env_file: [credenciales/hms-db.env, credenciales/s3.env]
+    environment:
+      HMS_DB_URL: jdbc:postgresql://postgres:5432/metastore
+      HMS_DB_USUARIO: metastore
+      HMS_HEAP: 384m
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/9083"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 30s
+    deploy:
+      resources:
+        limits: {cpus: "1.0", memory: 768m}
+
+  trino:
+    image: trinodb/trino:484
+    profiles: [consumo]
+    restart: unless-stopped
+    hostname: trino
+    depends_on:
+      hive-metastore: {condition: service_healthy}
+    env_file: [credenciales/s3.env]
+    volumes: ["./trino/etc:/etc/trino:ro"]
+    # 8090 en el host: el 8080 es la interfaz del master de Spark.
+    ports: ["127.0.0.1:8090:8080"]
+    healthcheck:
+      test: ["CMD", "/usr/lib/trino/bin/health-check"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 20s
+    deploy:
+      resources:
+        limits: {cpus: "2.0", memory: 1536m}
+
+  metabase:
+    image: metabase/metabase:v0.65.3.6
+    profiles: [consumo]
+    restart: unless-stopped
+    depends_on:
+      postgres: {condition: service_healthy}
+      trino: {condition: service_healthy}
+    env_file: [credenciales/metabase-db.env]
+    environment:
+      MB_DB_TYPE: postgres
+      MB_DB_HOST: postgres
+      MB_DB_PORT: "5432"
+      MB_DB_DBNAME: metabase
+      MB_DB_USER: metabase
+      JAVA_OPTS: -Xmx1g
+      MB_CHECK_FOR_UPDATES: "false"
+      MB_ANON_TRACKING_ENABLED: "false"
+    ports: ["127.0.0.1:3000:3000"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:3000/api/health | grep -q ok"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
+    deploy:
+      resources:
+        limits: {cpus: "1.0", memory: 1536m}
+
   # ---------------------------------------------------------------- SNS y SQS locales (fase 6)
   moto:
     image: motoserver/moto:5.2.5
@@ -280,3 +381,4 @@ volumes:
   mongo-1-datos:
   mongo-2-datos:
   mongo-3-datos:
+  postgres-datos:

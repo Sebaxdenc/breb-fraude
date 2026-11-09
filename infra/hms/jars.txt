@@ -1,0 +1,4 @@
+# JARs que se agregan a /opt/hive/lib de la imagen del Hive Metastore.
+# Formato: grupo:artefacto:versión[:clasificador] sha1 (ver infra/spark/descargar_jars.sh)
+# hadoop-aws y el SDK de AWS ya vienen en la imagen (Hadoop 3.4.1, share/hadoop/tools/lib).
+org.postgresql:postgresql:42.7.14 0e7c94ce80cb1dd9875ff44ffe6a40a8aaa3eefd

@@ -9,7 +9,7 @@ Plan para construir la arquitectura del Entregable 1 v2.0 (`documento/Entregable
 |---|---|---|
 | 0. Repositorio y contratos | S13 | 8 de 10 |
 | 1. Modelo dentro del Job 2 | S13 | 10 de 10 |
-| 2. Infraestructura local | S13 | 10 de 14 |
+| 2. Infraestructura local | S13 | 14 de 17 |
 | 3. Ingesta | S13–S14 | 2 de 5 |
 | 4. Streaming | S14 | 0 de 8 |
 | 5. Batch y orquestación | S15 | 0 de 6 |
@@ -48,7 +48,10 @@ Criterio del hito S13: `docker compose up` levanta todo con el perfil de desarro
 - [x] Decisión D1: SeaweedFS 4.52 (Apache 2.0) reemplaza a MinIO. `herramientas/infra/prueba_delta_s3.py` pasó con los binarios nativos: escritura, MERGE, OPTIMIZE, VACUUM y dos escritores concurrentes sin perder commits (riesgo R10)
 - [x] `S3DynamoDBLogStore` con endpoint de DynamoDB configurable, para usar DynamoDB Local: parche de 5 líneas en `infra/spark/logstore/` (riesgo R9)
 - [x] Núcleo de `infra/docker-compose.yml` con perfiles `dev` y `completo`: Kafka 4.3.2 KRaft (1 o 3 brókers), SeaweedFS, DynamoDB Local, Spark 3.5.9 (master y 1 o 2 workers), MongoDB 7.0 (replica set de 1 o 3) y moto
-- [ ] Resto del perfil `completo`: PostgreSQL 15, Hive Metastore, Trino, Metabase y Airflow 3 (fase 2b)
+- [x] Perfil `consumo` (fase 2b): PostgreSQL 15.19, Hive Metastore 4.2.1, Trino 484 con el catálogo `lakehouse` (conector Delta) y Metabase 0.65.3.6. Se combina con `dev` o con `completo`
+- [x] `herramientas/infra/prueba_consulta.py` pasó sin Docker: Spark escribe en los tres buckets, Trino crea el esquema y registra las tablas en el metastore, las consultas coinciden y Trino ve un append de Spark sin volver a registrar la tabla (RF11)
+- [ ] Perfil `consumo` en Docker en el equipo de la demo: `prueba_consulta.py` con Metabase y primera conexión de Metabase a Trino
+- [ ] Airflow 3 (fase 2c): imagen con el cliente de Spark para los DAG de la fase 5
 - [x] Imagen de Spark (`infra/spark/Dockerfile`): Python 3.11, numpy 1.26.4, pandas 2.2.3, xgboost-cpu 3.2.0, Delta 3.3.3, JARs verificados por SHA-1, paquete `breb` y artefactos del modelo copiados con `COPY`
 - [x] Creación de tópicos (`infra/kafka/crear_topicos.sh`): `breb.transacciones.raw` con 6 particiones, `replication.factor=3`, `min.insync.replicas=2`, `message.timestamp.type=LogAppendTime` y 7 días de retención en `completo` (1 y 1 en `dev`); probado con un clúster nativo de 3 nodos
 - [x] Inicialización del replica set (`infra/mongo/iniciar_replica.js`): `electionTimeoutMillis=2000`, keyFile, usuario root y usuario `breb_app` con readWrite solo sobre `breb`; probado con 1 y 3 miembros, y es idempotente
@@ -56,8 +59,8 @@ Criterio del hito S13: `docker compose up` levanta todo con el perfil de desarro
 - [x] Límites de CPU y memoria por servicio
 - [ ] `spark.cores.max` por aplicación (se fija al crear cada job, fase 4)
 - [x] Perfil `dev` en Docker en el equipo de la demo (Windows 11, WSL 2): los tres servicios de inicio terminan en `Exited (0)`, `verificar_stack.py` da **STACK OK** y `prueba_delta_s3.py` da **PRUEBA DELTA OK** en 182 s. En reposo, los 7 contenedores usan 1,04 GiB ([#7](https://github.com/Sebaxdenc/breb-fraude/pull/7), [#8](https://github.com/Sebaxdenc/breb-fraude/pull/8))
-- [ ] Perfil `completo` en Docker en el equipo de la demo: los mismos dos scripts
-- [ ] Medir la RAM del perfil `completo` (riesgo R5)
+- [x] Perfil `completo` en Docker en el equipo de la demo: 3 brókers, replica set de 3 y 2 workers sanos; **STACK OK** y **PRUEBA DELTA OK** en 222 s
+- [x] RAM del perfil `completo` con la prueba de Delta corriendo: 4,59 GiB en total (Kafka 1,02, MongoDB 0,42, workers 1,62, driver 1,06 y el resto 0,46) sobre 11,68 GiB de WSL (riesgo R5). Falta medirla con los Jobs 1 a 3 en la fase 7
 - [x] README: levantar el stack desde cero en Windows 11
 
 ## Fase 3 · Ingesta (S13–S14)
@@ -106,7 +109,7 @@ Criterio del hito S14: un evento llega a Bronze, Silver y MongoDB; el Job 2 publ
 - [ ] Completar en el documento la tasa sostenida y el p99 medidos
 - [ ] Publicar el `.drawio` y poner su enlace en la sección 3
 - [ ] Actualizar el documento: `transaction_uuid` es UUID v5 (no v4) y resultado de la decisión D2
-- [ ] Actualizar el documento: Kafka 4.3 en lugar de 3.6, SeaweedFS en lugar de MinIO y el parche de `S3DynamoDBLogStore`
+- [ ] Actualizar el documento: Kafka 4.3 en lugar de 3.6, SeaweedFS en lugar de MinIO, el parche de `S3DynamoDBLogStore`, Hive Metastore 4.2.1, Trino 484 con `register_table` y el perfil `consumo`
 - [ ] Guion de la demo con los pasos del diagrama
 - [ ] Ensayo de preguntas: explicar cualquier componente del diagrama
 
@@ -118,6 +121,7 @@ Criterio del hito S14: un evento llega a Bronze, Silver y MongoDB; el Job 2 publ
 | D2 | Particiones del tópico frente al orden de las variables | Con varias particiones, dos eventos muy cercanos pueden caer en micro-batches distintos y procesarse en otro orden, lo que cambia un poco los acumulados (sobre todo los de banco). Medirlo con la paridad en línea; si la diferencia afecta decisiones, usar 1 partición para la demo | S14 |
 | D3 | Tecnología de la API de ingesta | Contenedor Python mínimo. Si usan FastAPI, aclarar que su consumidor es Kafka, no el motor de autorización que se eliminó | S13 |
 | D4 | Estado inicial en el equipo de 16 GB | Calcularlo en Python pide unos 5,5 GB, que no caben junto al stack completo. Opciones: calcularlo en Kaggle y exportar los documentos (unos 390 MB sin comprimir) para que el DAG `bootstrap_state` solo los cargue; correr el DAG con el resto del stack apagado; o bajar la memoria de `cargar` y `procesar` (tipos categóricos, sin guardar las variables crudas) | S15 |
+| D5 | Perfiles para la demo | Propuesta: la demo de punta a punta corre `dev` + `consumo` (y Airflow); las pruebas de falla corren `completo` sin `consumo`. Juntos, los topes de memoria suman 16,2 GiB frente a 11,68 GiB de WSL. Se decide con la RAM medida en la fase 7 | S16 |
 
 ## Hallazgos que el equipo debe conocer
 - **El motor replica el notebook exactamente, incluidas sus particularidades.** `is_reciprocal_loop` vale 1 cuando el mismo par ordenante→destino ya transó antes, no cuando el destino le había enviado al ordenante: el notebook agrega y busca la clave invertida. `net_flow` combina acumulados de dos cuentas distintas. No se corrigen porque el modelo se entrenó así.
@@ -126,6 +130,9 @@ Criterio del hito S14: un evento llega a Bronze, Silver y MongoDB; el Job 2 publ
 - **`S3DynamoDBLogStore` no deja configurar el endpoint de DynamoDB** (Delta 3.3.3): siempre usa el de la región de AWS. `infra/spark/logstore/` toma la fuente oficial, le agrega la opción `ddb.endpoint` y reemplaza la clase en el JAR. En AWS se usa el JAR original, sin esa opción.
 - **Kafka 3.6 ya no tiene soporte ni imagen oficial** (`apache/kafka` empieza en 3.7). El stack usa 4.3.2; el conector de Spark 3.5 trae kafka-clients 3.4.1, que funciona con brókers 4.x.
 - **Delta avisa `Found Delta commit N with a timestamp ... greater than the next commit timestamp`.** S3 guarda la hora de modificación al segundo, así que dos commits en el mismo segundo quedan con la misma hora, y Delta suma 1 ms al segundo. Solo afecta la consulta por hora (`TIMESTAMP AS OF`); la consulta por versión no cambia.
+- **SeaweedFS reserva 7 volúmenes por bucket.** Con los tres buckets y poco disco libre falla con `No writable volumes`, y S3A reintenta varios minutos antes de rendirse. `WEED_MASTER_VOLUME_GROWTH_COPY_1=1` baja la reserva a 1.
+- **El Hive Metastore 4.2.1 no aplicó las claves JDO de `hive-site.xml`** y siguió usando Derby. `infra/hms/iniciar_hms.sh` las pasa con `-D`, como en la documentación de la imagen, y tampoco imprime la clave en el log.
+- **Spark no habla con el metastore.** Spark escribe Delta en S3 y la tabla se registra una vez con `CALL lakehouse.system.register_table`; Trino lee el log de Delta en cada consulta, así que ve los datos nuevos sin volver a registrarla.
 - **El servicio IAM del filer de SeaweedFS no tiene autenticación.** Por eso solo se publica el puerto S3 (8333), y únicamente en 127.0.0.1.
 - **El orden importa.** Las transacciones del mismo minuto se procesan en el orden del CSV (`seq`). Por eso el productor debe emitir en ese orden y el Job 2 ordena cada micro-batch por `seq`.
 
