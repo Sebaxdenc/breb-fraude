@@ -288,7 +288,7 @@ LAMINAS = [
              estado("Cumple")],
             ["R8 · paridad con el notebook", "Idéntica", "58 de 58 variables; 20.000 de 20.000 decisiones", estado("Cumple")],
             ["RF7 y RF9 · Gold con Airflow", "Cada 15 min, orquestado",
-             "En Docker: hechos en Gold a los 2 min; Gold completo en 3 min 35 s. Precisión y recall 0,52",
+             "En Docker: corrida en 3 min 33 s (antes 11 min 39 s); hechos en Gold a los 2 min 21 s. Precisión y recall 0,52",
              estado("Cumple")],
             ["RNF-06 · linaje", "< 5 min", "6 s, de Kafka a la acción de la entidad", estado("Cumple")],
             ["RF11 · acceso por rol", "Por rol", "10 de 10 casos de permisos", estado("Cumple")],

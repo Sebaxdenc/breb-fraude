@@ -227,7 +227,7 @@ docker compose exec airflow airflow dags list-runs breb_lakehouse_pipeline
 ```
 Si el pipeline está pausado, las corridas que se disparen (también las de `reprocess_quarantine`) quedan en cola hasta quitarle la pausa.
 
-OPTIMIZE y VACUUM van en su propio DAG porque son lentos y no hace falta correrlos cada 15 minutos: en la primera corrida en Docker, con los dos dentro del pipeline, sumaron 8 de 11 min 39 s (VACUUM solo, 6 min 46 s). El DAG de mantenimiento arranca en pausa para que no corra durante la demo:
+OPTIMIZE y VACUUM van en su propio DAG porque son lentos y no hace falta correrlos cada 15 minutos: en la primera corrida en Docker, con los dos dentro del pipeline, sumaron 8 de 11 min 39 s (VACUUM solo, 6 min 46 s); sin ellos, la corrida tardó 3 min 33 s. El DAG de mantenimiento arranca en pausa para que no corra durante la demo:
 ```powershell
 docker compose exec airflow airflow dags unpause breb_lakehouse_mantenimiento   # queda programado para las 08:00 UTC
 docker compose exec airflow airflow dags trigger breb_lakehouse_mantenimiento   # una corrida ahora (sin pausa)
