@@ -8,7 +8,7 @@ Todos los comandos son de PowerShell y se corren **desde la raíz del repositori
 
 Nathalia opera la terminal y el navegador durante toda la demo; los demás narran (ver `guion.md`, bloque 2).
 
-> **Airflow ya corrió en Docker:** la primera corrida de `breb_lakehouse_pipeline` (paso P10) terminó en `success` en **11 min 39 s** (2026-11-10, de 03:21 a 03:32 UTC). Una corrida así no cabe en los 8 minutos de la demo, así que el ensayo tiene que medir cuánto tarda la corrida en vivo hasta `silver_to_gold_facts` (sección 1, "Tiempos de Airflow"). El ensayo del día anterior sigue siendo obligatorio, y sus tiempos reemplazan los estimados de esta guía.
+> **Airflow ya corrió en Docker:** la primera corrida de `breb_lakehouse_pipeline` (paso P10) terminó en `success` en 11 min 39 s (2026-11-10, de 03:21 a 03:32 UTC), y 8 de esos minutos fueron OPTIMIZE y VACUUM. Por eso el mantenimiento pasó a su propio DAG diario (`breb_lakehouse_mantenimiento`, en pausa durante la demo) y el pipeline queda con las tareas de Gold, que en esa corrida terminaron a los 3 min 35 s. El ensayo del día anterior sigue siendo obligatorio: sus tiempos reemplazan los de esta guía (sección 1, "Tiempos de Airflow").
 
 ---
 
@@ -35,22 +35,36 @@ Hagan la demo completa, igual que en la clase, y anoten `docker stats --no-strea
 - **Plan B**, si no: Metabase se apaga antes de la clase y la consulta a Gold se hace con la terminal de Trino; los jobs de streaming se apagan justo antes de correr el pipeline (paso D5).
 
 ### Tiempos de Airflow
-La corrida completa es larga porque las 8 tareas van en serie (`max_active_tasks=1`) y cada tarea de Spark es un `spark-submit` nuevo en `local[2]` dentro del contenedor de Airflow. La primera corrida, además, carga las etiquetas de las 1.038.880 transacciones del test y hace OPTIMIZE y VACUUM de todas las tablas. Para la consulta a Gold (D7) basta con que termine `silver_to_gold_facts`: calidad, perfiles y mantenimiento pueden seguir corriendo mientras tanto.
+Primera corrida en Docker, con OPTIMIZE y VACUUM todavía dentro del pipeline (2026-11-10). Las tareas van en serie (`max_active_tasks=1`) y cada tarea de Spark es un `spark-submit` nuevo en `local[2]` dentro del contenedor de Airflow, así que cada una paga unos segundos de arranque:
 
-Después de cada corrida, la duración de cada tarea sale con:
+| Tarea | Duración | Minuto de la corrida en que termina |
+|---|---|---|
+| `check_streaming_health` | 44 s | 0:45 |
+| `check_new_silver_data` | 2 s | 0:48 |
+| `silver_to_gold_dims` | 37 s | 1:25 |
+| `silver_to_gold_facts` | 36 s | **2:02** (Gold ya se puede consultar) |
+| `data_quality_checks` | 43 s | 2:46 |
+| `sync_profiles_to_mongo` | 48 s | **3:35** (fin del pipeline sin mantenimiento) |
+| `optimize` (ahora en `breb_lakehouse_mantenimiento`) | 1 min 16 s | 4:52 |
+| `vacuum` (ahora en `breb_lakehouse_mantenimiento`) | 6 min 46 s | 11:39 |
+
+Con el DAG nuevo, sin OPTIMIZE ni VACUUM, la prueba del 2026-11-10 con 3.000 transacciones nuevas tardó **3 min 33 s**: `check_new_silver_data` 3 s, `check_streaming_health` 29 s, `silver_to_gold_dims` 55 s, `silver_to_gold_facts` 50 s (en verde a los **2 min 21 s**), `data_quality_checks` 35 s y `sync_profiles_to_mongo` 36 s. Con D6 en el minuto 3:45 de la demo, los hechos estarían en Gold hacia el 6:05, la calidad hacia el 6:40 y el pipeline completo hacia el 7:20. La corrida en vivo procesa la segunda parte del tramo (unas 7.500 transacciones), así que hay que confirmar los tiempos en el ensayo. Los tiempos salen de este comando, que se repite después de cada corrida:
 ```powershell
 docker compose exec airflow airflow dags list-runs breb_lakehouse_pipeline     # copiar el run_id
 docker compose exec airflow airflow tasks states-for-dag-run breb_lakehouse_pipeline "<run_id>"
 ```
 
-| Corrida | Desde que arranca hasta `silver_to_gold_facts` en verde | Total |
+| Corrida del ensayo | Hasta `silver_to_gold_facts` en verde | Total del pipeline |
 |---|---|---|
-| Primera (P10, primera parte del tramo) | | 11 min 39 s (2026-11-10) |
+| Prueba del DAG nuevo (2026-11-10, 3.000 transacciones nuevas) | 2 min 21 s | 3 min 33 s |
+| Primera (P10, primera parte del tramo) | | |
 | En vivo (D6, segunda parte del tramo) | | |
 
-- Si la corrida en vivo tiene `silver_to_gold_facts` en verde en 2 minutos o menos, sirve el orden del guion: D6 en 3:45 y D7 en 6:15.
+- Si en el ensayo la corrida en vivo tiene `silver_to_gold_facts` en verde en 2 min 30 s o menos, sirve el orden del guion: D6 en 3:45 y D7 en 6:15.
 - Si tarda más, usen el **orden B**: D6 en 3:45, después D8 (linaje) y al final D7 (consulta a Gold), cuando `silver_to_gold_facts` esté en verde. En D8, el paso 4 del linaje (Gold) sale "(sin registros)" hasta que termine `silver_to_gold_facts`; se explica así: "Bronze, Silver y la decisión ya están; el hecho llega a Gold cuando termine esta corrida".
-- Si al minuto 7:15 `silver_to_gold_facts` todavía no termina, D7 consulta Gold con la primera parte del tramo y se dice cuánto tardó la corrida en el ensayo. La salida de `docker compose exec airflow airflow tasks states-for-dag-run` es la evidencia.
+- Si al minuto 7:15 `silver_to_gold_facts` todavía no termina, D7 consulta Gold con la primera parte del tramo y se muestra la salida de `states-for-dag-run` como evidencia de cuánto tarda cada tarea.
+
+`breb_lakehouse_mantenimiento` se queda en pausa durante el ensayo y la demo: VACUUM tarda casi 7 minutos y compite por memoria con el resto. Si el profesor pregunta por OPTIMIZE y VACUUM, se muestra el DAG en la interfaz: "corre una vez al día; antes estaba en el pipeline y era 8 de sus 11 minutos".
 
 Las dos salidas de la terminal que confunden, y no son fallas:
 - `Could not import graphviz`: es un aviso de la CLI de Airflow; no afecta las corridas.
@@ -66,9 +80,9 @@ Las dos salidas de la terminal que confunden, y no son fallas:
 | P5 | Elegir el corte: `docker compose run --rm spark-cliente python /opt/breb/herramientas/streaming/dividir_tramo.py --paso 500` | Una tabla con las alertas antes y después de cada corte. Elijan **K** para que la parte en vivo tenga entre 5.000 y 7.500 transacciones y al menos 8 alertas. Anoten K y 15.000 − K. |
 | P6 | Streaming: `docker compose --profile streaming up -d` | En http://localhost:8080 aparecen 4 aplicaciones en RUNNING: job1, job2-riesgo, job2-ventanas y job3. |
 | P7 | Consumidores de alertas, cada uno en su propia ventana de PowerShell: `docker compose run --rm entidad --tramo` y `docker compose run --rm entidad --analistas` | "escuchando sus colas SQS" y "esperando alertas". Tienen que estar arriba **antes** de publicar: cada cola se crea al arrancar su servicio. |
-| P8 | Primera parte del tramo: `docker compose run --rm productor publicar --tramo --max K --escalones "100:200"` (con K = 7500, unos 75 s) | Termina en `PUBLICACIÓN OK` y deja `datos/productor/progreso.json` con el último seq. |
+| P8 | Primera parte del tramo: `docker compose run --rm productor publicar --tramo --max K --escalones "100:200"` (con K = 7500, unos 75 s) | Termina con `confirmados K de K` y 0 errores, y deja `datos/productor/progreso.json` con el último seq. Con los jobs prendidos, la tabla del RF1 puede decir `NO cumple` y el cierre `PUBLICACIÓN CON PROBLEMAS`: no es una falla (sección 4). |
 | P9 | Esperar a que los jobs terminen. Repetir cada 30 s: `docker compose logs --since 40s job2-riesgo job3-silver \| Select-String "batch"` | Cuando no imprime nada, terminaron: los jobs solo escriben una línea `batch` si el micro-batch trajo filas. Unos 2 o 3 minutos. |
-| P10 | Primera corrida de Gold. Apagar los jobs para liberar memoria: `docker compose stop job1-bronze job2-riesgo job2-ventanas job3-silver`. Luego `docker compose exec airflow airflow dags unpause breb_lakehouse_pipeline` | Arranca una corrida en segundos. `docker compose exec airflow airflow dags list-runs breb_lakehouse_pipeline` termina en `success` (la primera vez tardó 11 min 39 s). Anoten los tiempos por tarea ("Tiempos de Airflow"). |
+| P10 | Primera corrida de Gold. Apagar los jobs para liberar memoria: `docker compose stop job1-bronze job2-riesgo job2-ventanas job3-silver`. Luego `docker compose exec airflow airflow dags unpause breb_lakehouse_pipeline` | Arranca una corrida en segundos. `docker compose exec airflow airflow dags list-runs breb_lakehouse_pipeline` termina en `success`: unos 3,5 min sin el mantenimiento (la primera vez, con OPTIMIZE y VACUUM adentro, fueron 11 min 39 s). Anoten los tiempos por tarea ("Tiempos de Airflow"). |
 | P11 | Pausar el pipeline para que no corra durante la presentación: `docker compose exec airflow airflow dags pause breb_lakehouse_pipeline`. Volver a subir los jobs: `docker compose --profile streaming up -d` | Los 4 jobs siguen desde su checkpoint, sin datos nuevos. |
 | P12 | Consumo: `docker compose --profile consumo up -d`, después `docker compose --profile consumo run --rm spark-cliente python -m breb.consumo registrar` y `docker compose --profile consumo run --rm spark-cliente python -m breb.consumo tablero` | `registrar` lista las tablas; `tablero` imprime el enlace del tablero, por ejemplo http://localhost:3000/dashboard/1. |
 | P13 | Solo en el plan B: `docker compose stop metabase` | Trino y el Hive Metastore siguen arriba. |
@@ -87,7 +101,7 @@ Ventanas listas al empezar la demo:
 Los minutos son los del guion. N = 15.000 − K.
 
 ### D1 · 0:00 · Estado de partida
-- Airflow, lista de DAG: `bootstrap_state` con su corrida en verde y `breb_lakehouse_pipeline` con una corrida en verde y en pausa.
+- Airflow, lista de DAG: `bootstrap_state` con su corrida en verde, `breb_lakehouse_pipeline` con una corrida en verde y en pausa, y `breb_lakehouse_mantenimiento` en pausa.
 - Spark: las 4 aplicaciones en RUNNING y los núcleos que usa cada una (1, 2, 1 y 1).
 - Plan A: el tablero de Metabase muestra los hechos de la primera parte.
 
@@ -95,7 +109,7 @@ Los minutos son los del guion. N = 15.000 − K.
 ```powershell
 docker compose run --rm productor publicar --continuar --max N --escalones "50:200"
 ```
-Salida esperada: `continuando desde seq …`, `escalón 1/1: 50 ev/s durante 200 s` y, al final, `no quedan transacciones por publicar`, la tabla del RF1 y `PUBLICACIÓN OK`. Con N = 7.500 tarda unos 150 s.
+Salida esperada: `continuando desde seq …`, `escalón 1/1: 50 ev/s durante 200 s` y, al final, `no quedan transacciones por publicar` y la tabla del RF1. Con N = 7.500 tarda unos 150 s. Con los jobs de streaming corriendo en el mismo portátil, lo más probable es que el p99 suba a segundos, la tabla diga `NO cumple` y el cierre sea `PUBLICACIÓN CON PROBLEMAS`. Lo que importa es `confirmados N de N` y `errores 0`: no se perdió nada.
 
 **No usar `--tramo` junto con `--continuar` sin `--max`:** el productor publicaría 15.000 transacciones desde la mitad del tramo.
 
@@ -135,7 +149,7 @@ Abrir la corrida en la vista **Graph** y mostrar:
 - el log de `check_new_silver_data` ("Silver: versión actual X, última versión procesada en Gold Y");
 - cuando termine, el log de `data_quality_checks`, con los cuatro controles, la precisión y el recall.
 
-Si en el ensayo `silver_to_gold_facts` tardó más de 2 minutos, sigan con el **orden B**: D8 ahora y D7 al final.
+Si en el ensayo `silver_to_gold_facts` tardó más de 2 min 30 s desde que arranca la corrida, sigan con el **orden B**: D8 ahora y D7 al final.
 
 ### D7 · 6:15 · Consulta a Gold
 Plan A: recargar el tablero de Metabase y mostrar "4. Tasa de alertas por canal" y "Desempeño del modelo frente a las etiquetas reales".
@@ -172,6 +186,7 @@ Quien está hablando dice qué falló, por qué y cómo se arregla. Primer diagn
 
 | Síntoma | Causa probable | Qué decir y qué hacer |
 |---|---|---|
+| El productor termina en `PUBLICACIÓN CON PROBLEMAS` y el RF1 dice `NO cumple`, con 0 errores | Los jobs de streaming saturan el portátil (o Kafka acaba de arrancar: aviso `Coordinator load in progress`) | "Se confirmaron todos y no hubo errores: no se perdió nada. Lo que sube es la latencia fuente → Kafka, porque los cuatro jobs corren en el mismo portátil; ya lo medimos (5,5 s en la corrida del tramo). El RF1 se midió con el productor solo: p99 de 49 a 235 ms". |
 | El productor imprime `error de Kafka` o se queda sin confirmar mensajes | El bróker no responde (contenedor caído o sin memoria) | "Con acks=all, el productor no da un mensaje por enviado hasta que el bróker lo confirma; reintenta hasta 5 minutos y `progreso.json` solo avanza con lo confirmado". `docker compose up -d kafka-1` y repetir D2 con `--continuar`: no se duplica nada, porque el Job 2 deduplica por transaction_uuid y Silver hace MERGE. |
 | Un job de streaming aparece como `Restarting` | Se quedó sin memoria o perdió a Kafka o MongoDB | "La consulta falla, Docker la reinicia (`restart: unless-stopped`) y sigue desde el checkpoint; el micro-batch se repite con los mismos offsets y los efectos son idempotentes". Esperar 1 minuto. Si se repite, apagar `job2-ventanas` (no es necesario para la demo) o Metabase. |
 | Las alertas llegan con decenas de segundos de atraso | La latencia medida (D6): lectura y validación de Kafka en Python, y MongoDB | Mostrar los tramos en el log `[job2] batch`. "Variables y modelo tardan milisegundos; el resto es acceso a datos en un portátil saturado. La lámina 12 dice qué cambiaríamos". |
