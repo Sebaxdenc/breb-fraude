@@ -4,13 +4,14 @@ Proyecto final de ST1630 Sistemas Intensivos en Datos (EAFIT, 2026-2). Implement
 
 - **Plan y avance:** [PLAN.md](PLAN.md)
 - **Contratos de integración:** [contratos/README.md](contratos/README.md)
-- **Arquitectura implementada:** [docs/arquitectura/arquitectura_e2.png](docs/arquitectura/arquitectura_e2.png)
+- **Arquitectura implementada:** [docs/arquitectura/arquitectura_e2.png](docs/arquitectura/arquitectura_e2.png) (editable en draw.io: [arquitectura_e2.drawio](docs/arquitectura/arquitectura_e2.drawio))
 - **Sustentación:** [docs/presentacion/](docs/presentacion/) (guion, láminas, guía de la demo y preguntas de la defensa)
 - **Bitácora de delegación a agentes de IA:** [docs/bitacora_ia.md](docs/bitacora_ia.md)
 
 ## Estructura
 | Carpeta | Contenido |
 |---|---|
+| `contratos/` | Documentación de los contratos de integración: evento, alerta, variables del modelo y documentos de MongoDB |
 | `src/breb/contratos/` | Esquemas JSON del evento y de la alerta, validación |
 | `src/breb/datos/` | Carga de IBM AML en el mismo orden del entrenamiento |
 | `src/breb/features/` | Motor de las 58 variables del modelo (Job 2) |
@@ -24,7 +25,8 @@ Proyecto final de ST1630 Sistemas Intensivos en Datos (EAFIT, 2026-2). Implement
 | `docker-compose.yml` | Punto de entrada del stack en la raíz: incluye `infra/docker-compose.yml` |
 | `infra/` | Stack local: `docker-compose.yml`, imagen de Spark, inicialización de Kafka, MongoDB, S3 y DynamoDB |
 | `docs/` | Diagramas de la arquitectura implementada, material de la sustentación y bitácora de IA |
-| `src/breb/streaming/`, `jobs/` | Jobs 1, 2 y 3 de Spark Structured Streaming |
+| `src/breb/streaming/` | Jobs 1, 2 y 3 de Spark Structured Streaming (el Job 2 corre en dos aplicaciones: riesgo y ventanas) |
+| `jobs/` | Puntos de entrada de `spark-submit`: Jobs 1 a 4 y `lakehouse.py`, que corre los procesos batch de los DAG |
 | `src/breb/batch/` | Job 4 (Silver → Gold), cuarentena, perfiles en MongoDB, salud del streaming, OPTIMIZE y VACUUM |
 | `dags/`, `src/breb/orquestacion.py`, `infra/airflow/` | DAG de Airflow 3 y su imagen |
 | `src/breb/entidad/` | Consumidores de las alertas (entidades y analistas) |
@@ -113,8 +115,10 @@ Pensado para el equipo de la demo: Windows 11, 16 GB de RAM, Docker Desktop con 
 |---|---|---|
 | `dev` (por defecto, `infra/.env`) | `docker compose up -d` | 1 bróker de Kafka, MongoDB con 1 miembro, 1 worker de Spark |
 | `completo` | `docker compose --env-file completo.env up -d` | 3 brókers, replica set de 3 y 2 workers, para las pruebas de falla |
+| `streaming` (se suma a otro) | `docker compose --profile streaming up -d` | Jobs de streaming: `job1-bronze`, `job2-riesgo`, `job2-ventanas` y `job3-silver` |
 | `consumo` (se suma a otro) | `docker compose --profile consumo up -d` | PostgreSQL, Hive Metastore, Trino y Metabase |
 | `orquestacion` (se suma a otro) | `docker compose --profile orquestacion up -d` | PostgreSQL y Airflow 3 |
+| `herramientas` (con `run`) | `docker compose run --rm <servicio> ...` | `spark-cliente`, `productor` y `entidad`: se corren a demanda, no quedan arriba |
 
 Para sumar `consumo` a `completo` hay que nombrar los dos perfiles: `docker compose --env-file completo.env --profile completo --profile consumo up -d`. Con un `--profile` en la línea de comandos, Compose ignora el `COMPOSE_PROFILES` de `completo.env`: con solo `--profile consumo` quedaría 1 bróker con la configuración de 3, y `kafka-init` fallaría.
 
@@ -136,7 +140,7 @@ Con el perfil `consumo` (en `completo`, con los dos `--profile` de arriba):
 ```powershell
 docker compose --profile consumo run --rm spark-cliente spark-submit /opt/breb/herramientas/infra/prueba_consulta.py   # PRUEBA CONSULTA OK
 ```
-La primera vez, Metabase se configura en http://localhost:3000: crear el usuario administrador y agregar una base de datos de tipo **Starburst** (sirve para Trino) con host `trino`, puerto `8080`, catálogo `lakehouse`, usuario `metabase` y sin contraseña ni SSL. Trino también responde en http://localhost:8090 para clientes del host.
+Metabase no se configura a mano: `python -m breb.consumo tablero` (fase 6) crea el administrador con las credenciales de `infra/credenciales/metabase-admin.env` y la conexión a Trino (driver **Starburst**, host `trino`, puerto `8080`, catálogo `lakehouse`, usuario `metabase`, sin contraseña ni SSL). Si alguien crea el administrador desde la interfaz con otras credenciales, `tablero` no puede iniciar sesión. Trino también responde en http://localhost:8090 para clientes del host.
 Interfaces: Spark en http://localhost:8080 (master) y 8081/8082 (workers); con `consumo`, Trino en http://localhost:8090 y Metabase en http://localhost:3000. Puertos para clientes del host: Kafka `localhost:29092` (29093 y 29094 en completo), MongoDB `localhost:27017` (con `directConnection=true`), S3 `localhost:8333`, DynamoDB `localhost:8000` y moto `localhost:5000`. Todos escuchan solo en 127.0.0.1. Las credenciales de `infra/credenciales/` son solo para este entorno local.
 
 ### Productor (fase 3)
@@ -151,6 +155,8 @@ Opciones de `publicar`:
 - `--invalidos 0.01` mezcla un 1 % de eventos inválidos para mostrar la cuarentena.
 - `--continuar` sigue después del último `seq` publicado.
 - `--max` limita la cantidad de transacciones.
+- `--tramo` publica solo el tramo de la demo (`datos/productor/tramo_demo.json`).
+- `--solo-invalidos N` publica N eventos inválidos y nada más (para la cuarentena); no mueve el progreso del productor.
 
 Al final imprime, por escalón, la tasa lograda y la latencia fuente → Kafka (p50 y p99, RF1: p99 < 300 ms), y guarda el informe en `datos/mediciones/`. Después de `docker compose down -v`, el tópico queda vacío: la siguiente corrida va sin `--continuar`.
 
@@ -228,7 +234,7 @@ docker compose exec airflow airflow dags trigger reprocess_quarantine
 ```
 El resultado de cada evento queda en `silver.reprocesos_cuarentena`.
 
-Estado inicial: `bootstrap_state` hace lo mismo que `python -m breb.estado tramo` y `cargar --tramo --reemplazar`. Necesita unos 5,5 GB (decisión D4) y falla si encuentra jobs de streaming corriendo:
+Estado inicial: `bootstrap_state` hace lo mismo que `python -m breb.estado tramo` y `cargar --tramo --reemplazar` (y antes `python -m breb.productor preparar`, si falta `datos/productor/eventos_test.parquet`). Necesita unos 5,5 GB (decisión D4) y falla si encuentra jobs de streaming corriendo:
 ```powershell
 docker compose stop job1-bronze job2-riesgo job2-ventanas job3-silver
 docker compose exec airflow airflow dags trigger bootstrap_state
@@ -263,7 +269,7 @@ Para consultar a mano: `docker compose --profile consumo exec trino trino --user
 - **`image "docker.io/library/breb-spark:local": already exists`** al construir: pasaba cuando varios servicios tenían la misma sección `build`. Ahora solo `spark-master` construye la imagen y los demás la reutilizan.
 
 ## Artefactos del modelo
-`modelo/aml_xgb/` debe contener `model_meta.json` (incluido), `aml_xgb.json` y `golden_sample.parquet`, descargados de la pestaña Output de la versión 1 de [AML XGBoost Bre-B Fraud](https://www.kaggle.com/code/sebastianmedinacab/aml-xgboost-bre-b-fraud). No se usa `ohe.joblib`.
+`modelo/aml_xgb/` ya trae los tres artefactos que usa el Job 2: `model_meta.json`, `aml_xgb.json` y `golden_sample.parquet`. Salen de la pestaña Output de la versión 1 de [AML XGBoost Bre-B Fraud](https://www.kaggle.com/code/sebastianmedinacab/aml-xgboost-bre-b-fraud); solo hay que volver a descargarlos si se reentrena el modelo. No se usa `ohe.joblib`.
 
 ## Atribución
 - Modelo adaptado de [XGBoost + Leiden community detection](https://www.kaggle.com/code/arturmarkosyan2/xgboost-leiden-community-detection-pr-auc-0-39) (Artur Markosyan).
