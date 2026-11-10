@@ -19,13 +19,12 @@ def test_mismo_orden_de_filas(referencia):
     assert (test["timestamp"].to_numpy() == ref["timestamp"].to_numpy()).all()
 
 
-def test_58_variables_identicas(referencia):
+def test_58_variables_identicas(referencia, filas_distintas):
     var = _variables_test(referencia)
     ref = referencia["ref"]
     distintas = {}
     for f in referencia["meta"]["num_features"]:
-        a, b = var[f].to_numpy(np.float32), ref[f].to_numpy(np.float32)
-        n = int((~((a == b) | (np.isnan(a) & np.isnan(b)))).sum())
+        n = filas_distintas(f, var[f].to_numpy(np.float32), ref[f].to_numpy(np.float32))
         if n:
             distintas[f] = n
     assert distintas == {}, f"variables con filas distintas: {distintas}"

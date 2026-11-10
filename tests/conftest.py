@@ -3,6 +3,7 @@ import json
 import pathlib
 import sys
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -11,6 +12,23 @@ sys.path.insert(0, str(RAIZ / "src"))
 sys.path.insert(0, str(RAIZ / "herramientas" / "referencia"))
 
 FIXTURE = RAIZ / "tests" / "fixtures" / "referencia_sintetica"
+ULP_LOG1P = 2   # ver VARIABLES_LOG1P_F32 en breb.features.motor
+
+
+def _filas_distintas(nombre, a, b):
+    a, b = np.asarray(a, dtype=np.float32), np.asarray(b, dtype=np.float32)
+    iguales = (a == b) | (np.isnan(a) & np.isnan(b))
+    from breb.features.motor import VARIABLES_LOG1P_F32
+    if nombre in VARIABLES_LOG1P_F32:
+        ulp = np.abs(a.view(np.int32).astype(np.int64) - b.view(np.int32).astype(np.int64))
+        iguales |= (np.sign(a) == np.sign(b)) & (ulp <= ULP_LOG1P)
+    return int((~iguales).sum())
+
+
+@pytest.fixture(scope="session")
+def filas_distintas():
+    """Cuenta filas distintas entre motor y referencia; exacto salvo VARIABLES_LOG1P_F32 (≤ 2 ULP)."""
+    return _filas_distintas
 
 
 @pytest.fixture(scope="session")

@@ -1,0 +1,3 @@
+# Airflow 3 en la imagen de Spark (fase 5). Se compila junto con infra/spark/requirements.txt para que
+# no cambie ninguna versión fijada de la imagen (numpy 1.26, pandas 2.2.3, pyarrow 17, pyspark 3.5.9).
+apache-airflow[postgres]==3.3.2

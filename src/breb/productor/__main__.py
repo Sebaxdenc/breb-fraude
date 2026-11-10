@@ -35,6 +35,8 @@ def main() -> int:
     q.add_argument("--tramo", action="store_true",
                    help="publicar el tramo de la demo (desde_seq y transacciones de productor/tramo_demo.json)")
     q.add_argument("--semilla", type=int, default=7)
+    q.add_argument("--solo-invalidos", type=int, metavar="N",
+                   help="publicar solo N eventos inválidos (cuarentena), sin transacciones reales")
     q.add_argument("--informe", help="JSON con las mediciones (por defecto mediciones/productor_<fecha>.json)")
     a = ap.parse_args()
 
@@ -56,8 +58,8 @@ def main() -> int:
             desde = json.loads(progreso.read_text())["ultimo_seq_valido"] + 1
             print(f"continuando desde seq {desde}")
     resultado = publicar(a.eventos, a.bootstrap, a.topico, leer_escalones(a.escalones), a.invalidos,
-                         desde, a.max, a.semilla)
-    if resultado["ultimo_seq_valido"] is None:
+                         desde, a.max, a.semilla, solo_invalidos=a.solo_invalidos)
+    if resultado["ultimo_seq_valido"] is None and not a.solo_invalidos:
         print("NO HABÍA TRANSACCIONES POR PUBLICAR: ¿ya se publicaron todas? Quiten --continuar o usen --desde-seq")
         return 1
     if resultado["ultimo_seq_valido"] is not None and resultado["sin_confirmar"] == 0:

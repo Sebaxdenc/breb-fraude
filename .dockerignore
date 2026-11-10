@@ -10,6 +10,8 @@
 !herramientas/infra/
 !herramientas/streaming/
 !jobs/
+!dags/
+!infra/airflow/
 **/__pycache__
 **/*.pyc
 **/*.egg-info
