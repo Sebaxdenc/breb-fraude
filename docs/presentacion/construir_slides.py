@@ -266,7 +266,7 @@ LAMINAS = [
         texto(0.5, 4.5, 6.0, 2.35, [
             "# Airflow 3.3.2 (ADR 05)",
             "- Las tres etapas del Job 4 leen Silver en la versión que fija el sensor: un reintento no mezcla datos nuevos.",
-            "- La calidad corre antes de escribir en MongoDB; OPTIMIZE y VACUUM corren aunque algo falle.",
+            "- La calidad corre antes de escribir en MongoDB. OPTIMIZE y VACUUM van en un DAG diario: eran 8 de los 11 min 39 s.",
             "- Cron descartado: sin dependencias, reintentos ni historial.",
         ], tam=12.5, despues=4),
         texto(6.83, 4.5, 6.0, 2.35, [
@@ -288,7 +288,7 @@ LAMINAS = [
              estado("Cumple")],
             ["R8 · paridad con el notebook", "Idéntica", "58 de 58 variables; 20.000 de 20.000 decisiones", estado("Cumple")],
             ["RF7 y RF9 · Gold con Airflow", "Cada 15 min, orquestado",
-             "DAG completo en verde en Docker: 11 min 39 s. Job 4 del tramo: 65 s; precisión y recall 0,52",
+             "En Docker: hechos en Gold a los 2 min; Gold completo en 3 min 35 s. Precisión y recall 0,52",
              estado("Cumple")],
             ["RNF-06 · linaje", "< 5 min", "6 s, de Kafka a la acción de la entidad", estado("Cumple")],
             ["RF11 · acceso por rol", "Por rol", "10 de 10 casos de permisos", estado("Cumple")],
@@ -391,7 +391,7 @@ LAMINAS = [
             ["SNS no responde", "El micro-batch falla y se repite; puede haber alertas duplicadas, que la entidad descarta",
              "job2_riesgo.py:112-128 · servicio.py:78-101"],
             ["Falla una tarea de Airflow", "Hasta 3 reintentos con retroceso exponencial, sobre la misma versión de Silver",
-             "dags/breb_lakehouse_pipeline.py:42"],
+             "dags/breb_lakehouse_pipeline.py:43"],
             ["Llegan eventos inválidos", "Quedan en Bronze con is_valid = false; reprocess_quarantine corrige lo que "
                                          "puede y hace MERGE a Silver", "job1_bronze.py · batch/cuarentena.py:49"],
             ["Se acaba la memoria", "Docker reinicia el contenedor (restart: unless-stopped) y el job sigue desde el "

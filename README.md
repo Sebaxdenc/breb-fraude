@@ -214,7 +214,8 @@ Interfaz: http://localhost:8085, usuario `admin` y la clave `AIRFLOW_ADMIN_CLAVE
 
 | DAG | Cuándo | Qué hace |
 |---|---|---|
-| `breb_lakehouse_pipeline` | cada 15 minutos; arranca pausado | Silver → Gold (dimensiones, hechos), controles de calidad, perfiles en MongoDB, OPTIMIZE y VACUUM |
+| `breb_lakehouse_pipeline` | cada 15 minutos; arranca pausado | Silver → Gold (dimensiones, hechos), controles de calidad y perfiles en MongoDB |
+| `breb_lakehouse_mantenimiento` | todos los días a las 08:00 UTC (03:00 en Bogotá); arranca pausado | OPTIMIZE y VACUUM de las tablas del lakehouse |
 | `reprocess_quarantine` | bajo demanda | Corrige la cuarentena de Bronze, hace MERGE a Silver y dispara el pipeline |
 | `bootstrap_state` | bajo demanda | Estado inicial del Job 2 en MongoDB. Parámetro `inicio`: `tramo` (por defecto) o `corte` |
 
@@ -225,6 +226,12 @@ docker compose exec airflow airflow dags trigger breb_lakehouse_pipeline   # una
 docker compose exec airflow airflow dags list-runs breb_lakehouse_pipeline
 ```
 Si el pipeline está pausado, las corridas que se disparen (también las de `reprocess_quarantine`) quedan en cola hasta quitarle la pausa.
+
+OPTIMIZE y VACUUM van en su propio DAG porque son lentos y no hace falta correrlos cada 15 minutos: en la primera corrida en Docker, con los dos dentro del pipeline, sumaron 8 de 11 min 39 s (VACUUM solo, 6 min 46 s). El DAG de mantenimiento arranca en pausa para que no corra durante la demo:
+```powershell
+docker compose exec airflow airflow dags unpause breb_lakehouse_mantenimiento   # queda programado para las 08:00 UTC
+docker compose exec airflow airflow dags trigger breb_lakehouse_mantenimiento   # una corrida ahora (sin pausa)
+```
 
 Cuarentena: el productor publica eventos inválidos, el Job 1 los deja en la cuarentena de Bronze y el DAG recupera los que se pueden corregir sin inventar datos. Los recuperados llegan a Gold sin decisión del modelo, porque el Job 2 no los puntúa.
 ```powershell

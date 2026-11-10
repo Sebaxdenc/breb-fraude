@@ -73,14 +73,14 @@ Reglas para hablar:
 > El estado del Job 2 vive en MongoDB porque leer Silver en S3 tarda de 1 a 4 segundos y no cabe en un micro-batch de 1 segundo. Lo configuramos CP: write concern y read concern majority. Una escritura confirmada sobrevive a la caída del primario. Lo que sacrificamos es disponibilidad: durante la elección, que ajustamos a 2 segundos de timeout, el Job 2 no puede escribir. Las claves son la cuenta, el par ordenante–destino y el banco, porque así lee el Job 2: por clave y en lote. En producción se fragmenta por hash de la cuenta. Descartamos Cassandra porque sus contadores no son idempotentes ante reintentos. Del lado analítico usamos Delta en tres capas, y como varios procesos escriben la misma tabla, el log de commits va en DynamoDB. Nathalia sigue con la orquestación.
 
 ### Lámina 9 · Decisión: Airflow 3 y Trino con catálogo — Nathalia (0:45)
-**En pantalla:** los tres DAG arriba; Airflow y consumo abajo.
+**En pantalla:** los cuatro DAG arriba; Airflow y consumo abajo.
 
-> Airflow 3 orquesta tres DAG. El principal corre cada 15 minutos. Primero fija la versión de Silver que va a procesar, y las tres etapas del Job 4 leen esa versión con time travel; así un reintento no mezcla datos nuevos. Los controles de calidad corren antes de tocar MongoDB, y OPTIMIZE y VACUUM corren aunque algo falle. Los otros dos DAG son bajo demanda: reprocesar la cuarentena y cargar el estado inicial. Para consultar, Trino lee las tres capas a través del Hive Metastore, con reglas por rol: analistas y Metabase solo ven Gold, y cumplimiento lee todo sin poder modificar nada. Probamos diez casos y pasaron los diez. Sebastian presenta los resultados.
+> Airflow 3 orquesta cuatro DAG. El principal corre cada 15 minutos. Primero fija la versión de Silver que va a procesar, y las tres etapas del Job 4 leen esa versión con time travel; así un reintento no mezcla datos nuevos. Los controles de calidad corren antes de tocar MongoDB. OPTIMIZE y VACUUM van en un DAG diario aparte: en la primera corrida en Docker eran 8 de los 11 minutos. Los otros dos DAG son bajo demanda: reprocesar la cuarentena y cargar el estado inicial. Para consultar, Trino lee las tres capas a través del Hive Metastore, con reglas por rol: analistas y Metabase solo ven Gold, y cumplimiento lee todo sin poder modificar nada. Probamos diez casos y pasaron los diez. Sebastian presenta los resultados.
 
 ### Lámina 10 · Resultados medidos — Sebastian (0:50)
 **En pantalla:** tabla de requisitos con su estado.
 
-> Estos números se midieron en el portátil de la demo, de 16 GB. Del productor a Kafka, el p99 estuvo entre 49 y 235 milisegundos hasta 1.000 eventos por segundo: cumple. No perdimos ni duplicamos eventos: 71.910 de 71.910. La paridad con el notebook es exacta. Gold se arma en 65 segundos para el tramo de la demo, con precisión y recall de 0,52 contra las etiquetas reales, y Airflow ya corrió el pipeline completo en Docker, en verde, en 11 minutos y 39 segundos. El linaje de una alerta se reconstruye en 6 segundos, y el requisito era menos de 5 minutos. Lo que no cumple es la latencia de la decisión: 53 segundos de p99 a 50 eventos por segundo. Y faltan las pruebas de falla. Samuel explica la latencia.
+> Estos números se midieron en el portátil de la demo, de 16 GB. Del productor a Kafka, el p99 estuvo entre 49 y 235 milisegundos hasta 1.000 eventos por segundo: cumple. No perdimos ni duplicamos eventos: 71.910 de 71.910. La paridad con el notebook es exacta. Gold se arma en 65 segundos para el tramo de la demo, con precisión y recall de 0,52 contra las etiquetas reales, y Airflow ya lo corrió en Docker, en verde: los hechos llegan a Gold a los 2 minutos de arrancar la corrida. El linaje de una alerta se reconstruye en 6 segundos, y el requisito era menos de 5 minutos. Lo que no cumple es la latencia de la decisión: 53 segundos de p99 a 50 eventos por segundo. Y faltan las pruebas de falla. Samuel explica la latencia.
 
 ### Lámina 11 · Qué falló: la latencia — Samuel (0:50)
 **En pantalla:** el gráfico de latencia y la lista de errores encontrados.
@@ -112,11 +112,12 @@ Nathalia ejecuta los comandos de `demo_en_vivo.md` (pasos D1 a D8). Los demás n
 | 3:15 | Samuel | Termina el productor: tabla del RF1 | "p99 fuente → Kafka de tantos milisegundos: cumple el RF1." |
 | 3:30 | Mateo | D5. Jobs al día (y, en el plan B, se apagan los jobs de streaming) | "Silver ya tiene todo. En el plan B: apagamos el streaming para liberar memoria del portátil; en AWS corren en clústeres separados." |
 | 3:45 | Mateo | D6. Airflow: quitar la pausa de `breb_lakehouse_pipeline`, vista Graph | "check_new_silver_data fija la versión de Silver. Dims y hechos leen esa versión; si una tarea falla, se reintenta sobre los mismos datos." |
-| 5:30 | Mateo | Log de `data_quality_checks` (si la corrida todavía va en `silver_to_gold_*`, mostrar esa tarea en curso) | "Hechos igual a Silver, integridad con dim_tiempo, una versión vigente por cuenta, y precisión y recall contra las etiquetas reales." |
+| 5:30 | Mateo | Vista Graph: `silver_to_gold_dims` en verde y `silver_to_gold_facts` corriendo (en el ensayo, los hechos terminaron a los 2 min de arrancar la corrida) | "Dimensiones y hechos leen la misma versión de Silver. Cuando los hechos estén en verde, Gold ya se puede consultar." |
 | 6:15 | Sebastian | D7. Consulta a Gold (Trino o Metabase) | "Pregunta 4 del E1: tasa de alertas por canal. Y el desempeño del modelo con las etiquetas, que nunca viajaron en el evento." |
+| 6:55 | Mateo | Log de `data_quality_checks` (termina hacia el 6:30) | "Hechos igual a Silver, integridad con dim_tiempo, una versión vigente por cuenta, y precisión y recall contra las etiquetas reales." |
 | 7:15 | Sebastian | D8. `python -m breb.consumo linaje` | "Como cumplimiento: de la coordenada en Kafka hasta la acción de la entidad, en segundos." |
 
-**Orden B:** si en el ensayo `silver_to_gold_facts` tardó más de 2 minutos desde que arranca la corrida, D8 (linaje) va antes y D7 (consulta a Gold) al final, cuando los hechos estén en verde. La primera corrida en Docker tardó 11 min 39 s completa; `demo_en_vivo.md` ("Tiempos de Airflow") dice cómo medir cada tarea y qué decir si no alcanza.
+**Orden B:** si en el ensayo `silver_to_gold_facts` tardó más de 2 min 30 s desde que arranca la corrida, D8 (linaje) va antes y D7 (consulta a Gold) al final, cuando los hechos estén en verde. En la primera corrida en Docker, los hechos estuvieron en verde a los 2 min 2 s; `demo_en_vivo.md` ("Tiempos de Airflow") tiene la duración de cada tarea y qué decir si no alcanza.
 
 Si algo falla, quien está hablando dice qué falló, por qué (con la evidencia en pantalla) y cómo se arregla. `demo_en_vivo.md` tiene la tabla de fallas probables con esas tres respuestas. Un fallo bien explicado mantiene la nota de defensa; uno sin explicar la baja.
 
@@ -156,7 +157,7 @@ Se muestra solo si preguntan por fallas.
 | Completitud | 71.910 de 71.910 en Bronze, Silver y risk_decisions, sin duplicados |
 | Tramo de la demo | 15.000 transacciones desde el seq 6.814.261; 25 alertas, 13 de lavado real; precisión 0,52 y recall 0,52 |
 | Gold | Job 4 en 65 s; 15.000 hechos; 13.935 cuentas en dim_cuenta |
-| Airflow en Docker | `breb_lakehouse_pipeline` completo en verde en 11 min 39 s (primera corrida: 8 tareas en serie, cada una un `spark-submit` en `local[2]`) |
+| Airflow en Docker | Primera corrida: hechos en Gold a los 2 min 2 s y pipeline en 3 min 35 s sin mantenimiento; con OPTIMIZE y VACUUM adentro eran 11 min 39 s (VACUUM, 6 min 46 s), por eso pasaron al DAG diario `breb_lakehouse_mantenimiento` |
 | Estado inicial | 704.707 cuentas, 1.349.332 pares y 41.815 bancos; unos 5,5 GB para calcularlo |
 | Consumo | 11 tablas registradas en Trino (12 con `silver.reprocesos_cuarentena`); 10 de 10 casos de permisos; linaje en 6 s (objetivo < 5 min) |
 | Memoria | WSL con 11,68 GiB; dev + consumo en reposo 4,03 GiB; completo con la prueba de Delta 4,59 GiB |

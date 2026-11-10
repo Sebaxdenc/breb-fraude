@@ -12,7 +12,7 @@ Plan para construir la arquitectura del Entregable 1 v2.0 (`documento/Entregable
 | 2. Infraestructura local | S13 | 17 de 17 |
 | 3. Ingesta | S13–S14 | 7 de 7 |
 | 4. Streaming | S14 | 12 de 13 |
-| 5. Batch y orquestación | S15 | 6 de 7 |
+| 5. Batch y orquestación | S15 | 7 de 8 |
 | 6. Consumo y gobernanza | S15 | 7 de 8 |
 | 7. Pruebas y endurecimiento | S16 | 3 de 9 |
 | 8. Documento y sustentación | S16 | 1 de 7 |
@@ -23,7 +23,7 @@ Prioridad del equipo: mostrar el flujo completo funcionando. La latencia (D6) qu
 2. Tramo de la demo con alertas: puntuación fuera de línea del test y estado hasta ese punto · hecho
 3. Gold: Job 4 con el modelo en estrella y las etiquetas (fase 5) · hecho
 4. Trino con las tablas registradas, permisos, linaje y tablero de Metabase (fase 6) · hecho
-5. Airflow 3 con los tres DAG (fases 2 y 5) · `breb_lakehouse_pipeline` en verde en Docker (11 min 39 s); falta registrar `bootstrap_state` y `reprocess_quarantine` en Docker
+5. Airflow 3 con los cuatro DAG (fases 2 y 5) · `breb_lakehouse_pipeline` en verde en Docker (11 min 39 s, con OPTIMIZE y VACUUM adentro; ahora van en `breb_lakehouse_mantenimiento`); falta registrar `bootstrap_state` y `reprocess_quarantine` en Docker
 6. Guion de la demo con perfiles escalonados para que quepa en 11,7 GB de WSL (D5) · borrador listo en `docs/presentacion/`; falta el ensayo
 
 ---
@@ -102,10 +102,11 @@ Criterio del hito S14: un evento llega a Bronze, Silver y MongoDB; el Job 2 publ
 - [x] Job 4 (`src/breb/batch/job4_gold.py`): `fact_transferencias`, `dim_cuenta` (SCD 2 sobre entidad y nivel de riesgo), `dim_entidad_financiera`, `dim_canal` y `dim_tiempo` en `lakehouse-gold/analytics/`, incremental con MERGE e idempotente; completa las decisiones que llegan tarde. Probado sin Docker con Spark local (RF7)
 - [x] Job 4 en Docker con el tramo de la demo: **JOB 4 OK** en 65 s; 15.000 hechos, 13.935 cuentas, etiquetas de las 1.038.880 transacciones del test; 25 alertas con 13 verdaderos positivos, 12 falsos positivos y 12 falsos negativos (precisión 0,52, recall 0,52) ([#17](https://github.com/Sebaxdenc/breb-fraude/pull/17))
 - [x] Carga de las etiquetas `Is Laundering` a Gold (`etiquetas`) y controles de calidad en el Job 4: Silver completo en los hechos, claves no nulas, integridad con `dim_tiempo`, una versión vigente por cuenta, y precisión y recall de las alertas; cada ejecución queda en `ejecuciones`
-- [x] DAG `breb_lakehouse_pipeline` cada 15 min: `check_streaming_health` y `check_new_silver_data` → dimensiones → hechos → calidad → `sync_profiles_to_mongo` → OPTIMIZE y VACUUM (con `all_done`). Las tres etapas del Job 4 leen Silver en la versión que fija el sensor (time travel); 3 reintentos con retroceso exponencial, `catchup=False` y `max_active_runs=1` (RF9). Probado sin Docker: etapas por separado, sensor, salud del streaming, perfiles incrementales (la segunda corrida no escribe nada) y OPTIMIZE (de 33 a 10 archivos)
+- [x] DAG `breb_lakehouse_pipeline` cada 15 min: `check_streaming_health` y `check_new_silver_data` → dimensiones → hechos → calidad → `sync_profiles_to_mongo` (OPTIMIZE y VACUUM, en el DAG de mantenimiento). Las tres etapas del Job 4 leen Silver en la versión que fija el sensor (time travel); 3 reintentos con retroceso exponencial, `catchup=False` y `max_active_runs=1` (RF9). Probado sin Docker: etapas por separado, sensor, salud del streaming, perfiles incrementales (la segunda corrida no escribe nada) y OPTIMIZE (de 33 a 10 archivos)
+- [x] DAG `breb_lakehouse_mantenimiento` (ADR 03): OPTIMIZE y VACUUM salen del pipeline a un DAG diario (08:00 UTC, en pausa al crearse). En la primera corrida en Docker, dentro del pipeline, sumaban 8 de 11 min 39 s (VACUUM 6 min 46 s); sin ellos, las tareas de Gold terminaron a los 3 min 35 s y los hechos a los 2 min 2 s. Falta medir el pipeline nuevo en Docker
 - [x] DAG `reprocess_quarantine` bajo demanda (RF12): esquema corregido (contrato 1.0 más correcciones que no inventan datos), MERGE a Silver sin duplicados, resultado por evento en `silver.reprocesos_cuarentena` y disparo del pipeline. Sin Docker: recuperó 10 de 41 eventos inválidos y la segunda corrida no cambió nada
 - [x] DAG `bootstrap_state` bajo demanda (RF8): parámetro `inicio` (`tramo` o `corte`); comprueba que el streaming esté apagado, prepara los eventos y el tramo si faltan, carga el estado y lo verifica
-- [ ] Los tres DAG en verde de punta a punta en Docker. `breb_lakehouse_pipeline` ya corrió en Docker en el equipo de la demo: la primera corrida (paso P10 de `docs/presentacion/demo_en_vivo.md`) terminó en `success` en 11 min 39 s, el 2026-11-10 de 03:21 a 03:32 UTC. Falta dejar constancia de `bootstrap_state` y `reprocess_quarantine`
+- [ ] Los DAG en verde de punta a punta en Docker. `breb_lakehouse_pipeline` ya corrió en Docker en el equipo de la demo: la primera corrida (paso P10 de `docs/presentacion/demo_en_vivo.md`) terminó en `success` en 11 min 39 s, el 2026-11-10 de 03:21 a 03:32 UTC. Falta dejar constancia de `bootstrap_state` y `reprocess_quarantine`
 
 ## Fase 6 · Consumo y gobernanza (S15)
 - [x] SNS y SQS en moto: tópico `fraud-alerts-critical`, cola `breb-entidad-<id>` por entidad con filtro por el atributo `entidades` (origen y destino), y cola `breb-analistas-fraude` sin filtro en lugar del correo (RF15)
