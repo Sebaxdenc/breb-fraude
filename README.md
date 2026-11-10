@@ -4,6 +4,9 @@ Proyecto final de ST1630 Sistemas Intensivos en Datos (EAFIT, 2026-2). Implement
 
 - **Plan y avance:** [PLAN.md](PLAN.md)
 - **Contratos de integración:** [contratos/README.md](contratos/README.md)
+- **Arquitectura implementada:** [docs/arquitectura/arquitectura_e2.png](docs/arquitectura/arquitectura_e2.png)
+- **Sustentación:** [docs/presentacion/](docs/presentacion/) (guion, láminas, guía de la demo y preguntas de la defensa)
+- **Bitácora de delegación a agentes de IA:** [docs/bitacora_ia.md](docs/bitacora_ia.md)
 
 ## Estructura
 | Carpeta | Contenido |
@@ -18,7 +21,9 @@ Proyecto final de ST1630 Sistemas Intensivos en Datos (EAFIT, 2026-2). Implement
 | `modelo/` | Notebook de entrenamiento (versión 1 de Kaggle) y artefactos del modelo |
 | `herramientas/referencia/` | Dataset sintético y ejecución del notebook original para la prueba de paridad |
 | `herramientas/kaggle/` | Notebooks para Kaggle: verificación de paridad con datos reales y demo del modelo |
+| `docker-compose.yml` | Punto de entrada del stack en la raíz: incluye `infra/docker-compose.yml` |
 | `infra/` | Stack local: `docker-compose.yml`, imagen de Spark, inicialización de Kafka, MongoDB, S3 y DynamoDB |
+| `docs/` | Diagramas de la arquitectura implementada, material de la sustentación y bitácora de IA |
 | `src/breb/streaming/`, `jobs/` | Jobs 1, 2 y 3 de Spark Structured Streaming |
 | `src/breb/batch/` | Job 4 (Silver → Gold), cuarentena, perfiles en MongoDB, salud del streaming, OPTIMIZE y VACUUM |
 | `dags/`, `src/breb/orquestacion.py`, `infra/airflow/` | DAG de Airflow 3 y su imagen |
@@ -35,6 +40,53 @@ uv venv -p 3.11 .venv
 uv pip install -p .venv/bin/python -e ".[dev]"
 .venv/bin/python -m pytest -q
 ```
+
+## Correr el pipeline desde cero
+Resumen de punta a punta con el tramo de la demo. Los comandos son de PowerShell y se corren en la raíz del repositorio: el `docker-compose.yml` de la raíz incluye `infra/docker-compose.yml` (Docker Compose 2.20 o posterior) y da el mismo proyecto que correrlos dentro de `infra/`. Las secciones siguientes explican cada paso y sus opciones.
+
+**Requisitos:** Docker Desktop con WSL 2 y 12 GB para WSL (ver "Preparación"), y `LI-Small_Trans.csv` de [IBM Transactions for Anti Money Laundering](https://www.kaggle.com/datasets/ealtman2019/ibm-transactions-for-anti-money-laundering-aml) en la carpeta `datos/` de la raíz. Los artefactos del modelo ya están en `modelo/aml_xgb/`.
+
+```powershell
+# 1. Imágenes (una vez, con internet; unos 20 minutos): Spark, Airflow, Hive Metastore y productor se construyen
+docker compose --profile consumo --profile orquestacion --profile herramientas build
+docker compose --profile consumo --profile orquestacion --profile herramientas --profile streaming pull
+
+# 2. Infraestructura y Airflow, desde cero
+docker compose down -v
+docker compose up -d                                    # Kafka, MongoDB, SeaweedFS, DynamoDB Local, Spark, moto
+docker compose --profile orquestacion up -d             # PostgreSQL y Airflow (http://localhost:8085)
+docker compose ps -a                                    # los servicios de inicio en "Exited (0)" y airflow "healthy"
+
+# 3. Datos de la reproducción (una vez: quedan en datos/productor/)
+docker compose run --rm productor preparar              # transacciones posteriores al corte y sus etiquetas
+docker compose run --rm spark-cliente python -m breb.estado tramo   # puntuación del test y tramo de la demo (6 GB, 5 min)
+
+# 4. Estado inicial del Job 2 en MongoDB, orquestado (equivale a: python -m breb.estado cargar --tramo --reemplazar)
+docker compose exec airflow airflow dags trigger bootstrap_state
+docker compose exec airflow airflow dags list-runs bootstrap_state  # repetir hasta "success"
+
+# 5. Streaming: Jobs 1, 2 y 3, y los consumidores de alertas (cada uno en su ventana)
+docker compose --profile streaming up -d
+docker compose run --rm entidad --tramo
+docker compose run --rm entidad --analistas
+
+# 6. Publicar el tramo y verificar Kafka, Bronze, Silver, risk_decisions y MongoDB
+docker compose run --rm productor publicar --tramo --escalones "50:300"
+docker compose run --rm spark-cliente spark-submit /opt/breb/herramientas/streaming/verificar_fase4.py --esperar 900
+
+# 7. Gold con Airflow, con el streaming apagado para liberar memoria
+docker compose stop job1-bronze job2-riesgo job2-ventanas job3-silver
+docker compose exec airflow airflow dags unpause breb_lakehouse_pipeline
+docker compose exec airflow airflow dags list-runs breb_lakehouse_pipeline   # repetir hasta "success"
+
+# 8. Consumo: Trino, permisos, tablero de Metabase (http://localhost:3000) y linaje
+docker compose --profile consumo up -d
+docker compose --profile consumo run --rm spark-cliente python -m breb.consumo registrar
+docker compose --profile consumo run --rm spark-cliente python -m breb.consumo permisos
+docker compose --profile consumo run --rm spark-cliente python -m breb.consumo tablero
+docker compose --profile consumo run --rm spark-cliente python -m breb.consumo linaje
+```
+Resultados esperados: `PUBLICACIÓN OK` en el paso 6, `FASE 4 OK` en la verificación, la corrida de `breb_lakehouse_pipeline` en `success`, `PERMISOS OK` y el enlace del tablero. En el portátil de 16 GB no conviene tener `streaming`, `consumo` y `orquestacion` arriba a la vez: por eso el paso 7 apaga los jobs. La guía de la demo en vivo ([docs/presentacion/demo_en_vivo.md](docs/presentacion/demo_en_vivo.md)) divide el paso 6 en una parte antes de la clase y otra en vivo.
 
 ## Levantar el stack
 Pensado para el equipo de la demo: Windows 11, 16 GB de RAM, Docker Desktop con WSL 2.
