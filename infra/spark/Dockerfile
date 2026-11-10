@@ -20,7 +20,7 @@ COPY infra/spark/logstore/ logstore/
 RUN sed -i 's/\r$//' jars.txt descargar_jars.sh logstore/construir_logstore.sh logstore/ddb-endpoint.patch \
  && sh descargar_jars.sh jars.txt runtime compilacion && sh logstore/construir_logstore.sh runtime compilacion
 
-FROM ${PYTHON_IMAGE}
+FROM ${PYTHON_IMAGE} AS spark
 COPY --from=jre /opt/java/openjdk /opt/java/openjdk
 ENV JAVA_HOME=/opt/java/openjdk \
     PATH=/opt/java/openjdk/bin:$PATH \
@@ -52,3 +52,20 @@ USER spark
 WORKDIR /opt/breb
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["bash"]
+
+# Airflow 3 sobre la imagen de Spark (fase 5): los DAG lanzan spark-submit, Python y el paquete breb en el mismo
+# contenedor. requirements.lock se resolvió junto con infra/spark/requirements.txt, así que no cambia ninguna
+# versión de la imagen de Spark.
+FROM spark AS airflow
+USER root
+COPY infra/airflow/requirements.lock /tmp/airflow.lock
+RUN pip install --no-cache-dir -r /tmp/airflow.lock
+COPY dags/ /opt/breb/dags/
+COPY infra/airflow/iniciar_airflow.sh /opt/breb/infra/airflow/iniciar_airflow.sh
+RUN sed -i 's/\r$//' /opt/breb/infra/airflow/iniciar_airflow.sh \
+ && mkdir -p /opt/airflow/logs && chown -R spark /opt/airflow
+ENV AIRFLOW_HOME=/opt/airflow
+USER spark
+WORKDIR /opt/airflow
+ENTRYPOINT ["/usr/bin/tini", "--", "sh", "/opt/breb/infra/airflow/iniciar_airflow.sh"]
+CMD []

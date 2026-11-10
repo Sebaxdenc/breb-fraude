@@ -74,7 +74,7 @@ def test_almacen_mongo_equivale_a_memoria_con_reintento(referencia, puntuador, e
         assert doc["streaming"] == memoria.docs[0][doc["_id"]]["streaming"]
 
 
-def test_reproduccion_completa_en_microbatches(referencia, puntuador, eventos_test):
+def test_reproduccion_completa_en_microbatches(referencia, puntuador, eventos_test, filas_distintas):
     almacen = _almacen_con_estado_inicial(referencia, "memoria")
     lotes = []
     for b, inicio in enumerate(range(0, len(eventos_test), TAM_LOTE)):
@@ -87,9 +87,10 @@ def test_reproduccion_completa_en_microbatches(referencia, puntuador, eventos_te
     ref = referencia["ref"]
     assert len(dec) == len(ref)
     assert np.abs(dec["risk_score"].to_numpy() - ref["score"].to_numpy()).max() < 1e-6
-    var = np.vstack(dec["variables"].to_numpy())
-    esperado = ref[referencia["meta"]["num_features"]].to_numpy(np.float32)
-    assert np.array_equal(var.astype(np.float32), esperado)
+    var = np.vstack(dec["variables"].to_numpy()).astype(np.float32)
+    distintas = {f: n for i, f in enumerate(referencia["meta"]["num_features"])
+                 if (n := filas_distintas(f, var[:, i], ref[f].to_numpy(np.float32)))}
+    assert distintas == {}, distintas
 
 
 def test_reintento_tras_falla_a_mitad_de_escritura(referencia, puntuador, eventos_test):

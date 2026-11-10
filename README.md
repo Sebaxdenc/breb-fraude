@@ -20,11 +20,13 @@ Proyecto final de ST1630 Sistemas Intensivos en Datos (EAFIT, 2026-2). Implement
 | `herramientas/kaggle/` | Notebooks para Kaggle: verificación de paridad con datos reales y demo del modelo |
 | `infra/` | Stack local: `docker-compose.yml`, imagen de Spark, inicialización de Kafka, MongoDB, S3 y DynamoDB |
 | `src/breb/streaming/`, `jobs/` | Jobs 1, 2 y 3 de Spark Structured Streaming |
+| `src/breb/batch/` | Job 4 (Silver → Gold), cuarentena, perfiles en MongoDB, salud del streaming, OPTIMIZE y VACUUM |
+| `dags/`, `src/breb/orquestacion.py`, `infra/airflow/` | DAG de Airflow 3 y su imagen |
+| `src/breb/entidad/` | Consumidores de las alertas (entidades y analistas) |
+| `src/breb/consumo/` | Registro en Trino, permisos, linaje y tablero de Metabase |
 | `herramientas/infra/` | Verificación del stack y prueba de Delta Lake sobre el S3 local |
 | `herramientas/streaming/` | Verificación de la fase 4 |
 | `tests/` | Pruebas (paridad, Job 2 con MongoDB, contratos) |
-
-Pendiente según el plan: `dags/` (Airflow) y `servicios/` (servicio de la entidad).
 
 ## Entorno de desarrollo
 La versión de Python y de las librerías es la de la imagen de Spark: PySpark 3.5 admite hasta Python 3.11 y exige numpy < 2.
@@ -60,6 +62,7 @@ Pensado para el equipo de la demo: Windows 11, 16 GB de RAM, Docker Desktop con 
 | `dev` (por defecto, `infra/.env`) | `docker compose up -d` | 1 bróker de Kafka, MongoDB con 1 miembro, 1 worker de Spark |
 | `completo` | `docker compose --env-file completo.env up -d` | 3 brókers, replica set de 3 y 2 workers, para las pruebas de falla |
 | `consumo` (se suma a otro) | `docker compose --profile consumo up -d` | PostgreSQL, Hive Metastore, Trino y Metabase |
+| `orquestacion` (se suma a otro) | `docker compose --profile orquestacion up -d` | PostgreSQL y Airflow 3 |
 
 Para sumar `consumo` a `completo` hay que nombrar los dos perfiles: `docker compose --env-file completo.env --profile completo --profile consumo up -d`. Con un `--profile` en la línea de comandos, Compose ignora el `COMPOSE_PROFILES` de `completo.env`: con solo `--profile consumo` quedaría 1 bróker con la configuración de 3, y `kafka-init` fallaría.
 
@@ -140,6 +143,47 @@ docker compose stop job1-bronze job2-riesgo job2-ventanas job3-silver
 docker compose run --rm spark-cliente spark-submit --master local[2] --driver-memory 2g /opt/breb/jobs/job4_gold.py
 ```
 Termina en `JOB 4 OK`, con los controles de calidad y la precisión y el recall de las alertas contra las etiquetas reales.
+
+### Orquestación: Airflow 3 (fase 5)
+Airflow 3.3.2 corre en un solo contenedor (`airflow standalone`, LocalExecutor) con el metastore en PostgreSQL. Las tareas de Spark corren dentro de ese contenedor en modo local (`local[2]`, 2 GB de driver), porque los jobs de streaming ocupan los núcleos del worker.
+```powershell
+docker compose build
+docker compose --profile orquestacion build airflow   # la primera vez instala Airflow sobre la imagen de Spark
+docker compose --profile orquestacion up -d           # PostgreSQL y Airflow
+docker compose ps airflow                             # esperar "healthy" (de 1 a 3 minutos)
+```
+Interfaz: http://localhost:8085, usuario `admin` y la clave `AIRFLOW_ADMIN_CLAVE` de `infra/credenciales/airflow.env`.
+
+| DAG | Cuándo | Qué hace |
+|---|---|---|
+| `breb_lakehouse_pipeline` | cada 15 minutos; arranca pausado | Silver → Gold (dimensiones, hechos), controles de calidad, perfiles en MongoDB, OPTIMIZE y VACUUM |
+| `reprocess_quarantine` | bajo demanda | Corrige la cuarentena de Bronze, hace MERGE a Silver y dispara el pipeline |
+| `bootstrap_state` | bajo demanda | Estado inicial del Job 2 en MongoDB. Parámetro `inicio`: `tramo` (por defecto) o `corte` |
+
+El pipeline procesa Silver en una versión fija de Delta (`check_new_silver_data`) y se salta el resto si no hay datos nuevos. `check_streaming_health` solo falla si un job de streaming está activo y va más de 50.000 mensajes atrasado; con el streaming apagado, Gold se calcula igual.
+```powershell
+docker compose exec airflow airflow dags unpause breb_lakehouse_pipeline   # corre ahora y después cada 15 minutos
+docker compose exec airflow airflow dags trigger breb_lakehouse_pipeline   # una corrida más, a mano
+docker compose exec airflow airflow dags list-runs breb_lakehouse_pipeline
+```
+Si el pipeline está pausado, las corridas que se disparen (también las de `reprocess_quarantine`) quedan en cola hasta quitarle la pausa.
+
+Cuarentena: el productor publica eventos inválidos, el Job 1 los deja en la cuarentena de Bronze y el DAG recupera los que se pueden corregir sin inventar datos. Los recuperados llegan a Gold sin decisión del modelo, porque el Job 2 no los puntúa.
+```powershell
+docker compose up -d job1-bronze                                  # si estaba apagado
+docker compose run --rm productor publicar --solo-invalidos 50    # no mueve el progreso del productor
+docker compose exec airflow airflow dags trigger reprocess_quarantine
+```
+El resultado de cada evento queda en `silver.reprocesos_cuarentena`.
+
+Estado inicial: `bootstrap_state` hace lo mismo que `python -m breb.estado tramo` y `cargar --tramo --reemplazar`. Necesita unos 5,5 GB (decisión D4) y falla si encuentra jobs de streaming corriendo:
+```powershell
+docker compose stop job1-bronze job2-riesgo job2-ventanas job3-silver
+docker compose exec airflow airflow dags trigger bootstrap_state
+```
+Para empezar en el corte de validación, se dispara desde la interfaz (botón Trigger) con `inicio` = `corte`.
+
+Memoria: `orquestacion` suma 8,4 GiB de topes (Airflow 8 GiB, porque `bootstrap_state` corre dentro del contenedor). No conviene tener `streaming`, `consumo` y `orquestacion` arriba a la vez en el equipo de 16 GB: para consultar en Trino y Metabase, primero se apagan los jobs de streaming.
 
 ### Consumo: Trino, permisos, linaje y tablero (fase 6)
 Después del Job 4, con los jobs de streaming apagados:

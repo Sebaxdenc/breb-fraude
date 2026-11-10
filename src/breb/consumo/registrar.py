@@ -16,6 +16,7 @@ GOLD = os.environ.get("BREB_GOLD", "s3a://lakehouse-gold/analytics")
 TABLAS = [
     ("bronze", "transacciones", os.environ.get("BREB_BRONZE", "s3a://lakehouse-bronze/transacciones")),
     ("silver", "transacciones", os.environ.get("BREB_SILVER", "s3a://lakehouse-silver/transacciones")),
+    ("silver", "reprocesos_cuarentena", os.environ.get("BREB_REPROCESOS", "s3a://lakehouse-silver/reprocesos_cuarentena")),
     ("gold", "risk_decisions", os.environ.get("BREB_RISK_DECISIONS", "s3a://lakehouse-gold/risk_decisions")),
     ("gold", "progreso_streaming", os.environ.get("BREB_METRICAS", "s3a://lakehouse-gold/metricas/progreso_streaming")),
 ] + [("gold", t, f"{GOLD}/{t}") for t in ("fact_transferencias", "dim_cuenta", "dim_entidad_financiera", "dim_canal",

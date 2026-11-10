@@ -24,6 +24,12 @@ aritmética con numexpr (`pandas.core.computation.expressions._MIN_ELEMENTS`), q
 NumPy en dos puntos. El Job 2 procesa lotes chicos, donde pandas usa NumPy, así que se replican a mano:
 - float32 combinado con un escalar de Python (`s + 1e-5`, `1.0 - s`) da float64, no float32.
 - `x ** 2` se calcula con pow() de la libm, que en cerca del 0,08 % de los montos no da igual a x * x.
+
+Hay una diferencia que depende de la máquina y no del código: NumPy elige al importar la implementación
+de `log1p` en float32 según la CPU. Con AVX-512 usa su versión vectorizada; sin AVX-512, la de la libm.
+Entre las dos hay hasta 2 ULP en cerca del 3 % de las filas de las variables de `VARIABLES_LOG1P_F32`.
+La referencia sintética de las pruebas se generó en una CPU sin AVX-512; en una con AVX-512 el score
+sigue igual (diferencia < 1e-6, mismas decisiones), así que las pruebas toleran esos 2 ULP solo ahí.
 """
 from __future__ import annotations
 
@@ -34,6 +40,8 @@ import pandas as pd
 
 SIN_TIEMPO_FROM_TO = 86400.0   # fillna del notebook para seconds_since_last_tx_from/_to
 SIN_TIEMPO_CADENA = 999999.0   # fillna para chain_turnaround_sec y sender_inflow_gap_sec
+# Variables que pasan por np.log1p sobre float32 (su último bit depende de la CPU, ver arriba).
+VARIABLES_LOG1P_F32 = ("pass_through_velocity", "passthrough_velocity_true")
 
 
 def cuenta_vacia() -> dict:

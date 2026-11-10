@@ -15,6 +15,11 @@ Silver + risk_decisions (+ etiquetas) → en s3a://lakehouse-gold/analytics/:
 Incremental e idempotente: solo procesa las transacciones de Silver que todavía no están en los hechos, todo
 se escribe con MERGE, y una ejecución repetida no cambia nada. Si una transacción llegó a Silver antes que su
 decisión a risk_decisions, el hecho se inserta sin decisión y una ejecución posterior la completa.
+
+Etapas (tareas del DAG breb_lakehouse_pipeline): dimensiones → hechos → calidad. Las tres leen Silver en la
+misma versión de Delta (`--version-silver`, time travel): si el Job 3 agrega filas mientras corren, las nuevas
+quedan para la ejecución siguiente y los hechos siempre encuentran sus dimensiones. `todo` corre las tres
+con la versión actual de Silver.
 """
 from __future__ import annotations
 
@@ -211,9 +216,8 @@ def completar_decisiones(spark: SparkSession, decisiones: DataFrame) -> int:
     return n
 
 
-def calidad(spark: SparkSession) -> tuple[bool, dict]:
+def calidad(spark: SparkSession, silver: DataFrame) -> tuple[bool, dict]:
     fact = spark.read.format("delta").load(ruta("fact_transferencias"))
-    silver = spark.read.format("delta").load(SILVER)
     dim = spark.read.format("delta").load(ruta("dim_cuenta"))
     tiempo = spark.read.format("delta").load(ruta("dim_tiempo")).select("tiempo_key")
     r = fact.agg(
@@ -221,7 +225,8 @@ def calidad(spark: SparkSession) -> tuple[bool, dict]:
         F.sum(F.col("tiempo_key").isNull().cast("int")).alias("sin_tiempo"),
         F.sum(F.col("canal_key").isNull().cast("int")).alias("sin_canal"),
         F.sum((F.col("cuenta_origen_key").isNull() | F.col("cuenta_destino_key").isNull()).cast("int")).alias("sin_cuenta"),
-        F.sum(F.col("decision").isNull().cast("int")).alias("sin_decision"),
+        F.sum((F.col("decision").isNull() & (F.col("seq") >= 0)).cast("int")).alias("sin_decision"),
+        F.sum((F.col("decision").isNull() & (F.col("seq") < 0)).cast("int")).alias("de_cuarentena"),
         F.sum(((F.col("decision") == "alerta") & (F.col("es_lavado") == 1)).cast("int")).alias("vp"),
         F.sum(((F.col("decision") == "alerta") & (F.col("es_lavado") == 0)).cast("int")).alias("fp"),
         F.sum(((F.col("decision") == "sin_alerta") & (F.col("es_lavado") == 1)).cast("int")).alias("fn"),
@@ -233,7 +238,7 @@ def calidad(spark: SparkSession) -> tuple[bool, dict]:
     r["precision"] = round(r["vp"] / (r["vp"] + r["fp"]), 4) if r["vp"] + r["fp"] else None
     r["recall"] = round(r["vp"] / (r["vp"] + r["fn"]), 4) if r["vp"] + r["fn"] else None
     controles = {
-        "todos los registros de Silver están en los hechos": r["hechos"] == r["silver"],
+        "todas las transacciones de Silver (en esta versión) están en los hechos": r["hechos"] == r["silver"],
         "ningún hecho sin clave de tiempo, canal o cuenta": r["sin_tiempo"] + r["sin_canal"] + r["sin_cuenta"] == 0,
         "integridad referencial con dim_tiempo": r["hechos_sin_dim_tiempo"] == 0,
         "una sola versión vigente por cuenta en dim_cuenta": r["cuentas_con_varias_vigentes"] == 0,
@@ -242,53 +247,124 @@ def calidad(spark: SparkSession) -> tuple[bool, dict]:
         print(f"[job4] {'[ok]' if ok else '[FALLA]'} {nombre}")
     if r["sin_decision"]:
         print(f"[job4] aviso: {r['sin_decision']:,} hechos todavía sin decisión (risk_decisions atrasada)")
+    if r["de_cuarentena"]:
+        print(f"[job4] {r['de_cuarentena']:,} hechos recuperados de la cuarentena, sin decisión (el Job 2 no los puntúa)")
     return all(controles.values()), r
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--sin-calidad", action="store_true")
-    a = ap.parse_args()
-    comprobar_servicios(SeaweedFS=os.environ.get("S3_ENDPOINT"), DynamoDB=os.environ.get("DYNAMODB_ENDPOINT"))
-    spark = SparkSession.builder.appName("job4-gold").getOrCreate()
-    spark.sparkContext.setLogLevel(os.environ.get("BREB_LOG", "WARN"))
-    spark.conf.set("spark.sql.shuffle.partitions", os.environ.get("JOB4_PARTICIONES", "4"))
-    t0 = time.perf_counter()
+def version_actual(spark: SparkSession) -> int:
+    return int(DeltaTable.forPath(spark, SILVER).history(1).select("version").first()[0])
 
-    con_etiquetas = cargar_etiquetas(spark)
-    silver = spark.read.format("delta").load(SILVER)
-    decisiones = (spark.read.format("delta").load(RISK_DECISIONS)
-                  .select("transaction_uuid", "risk_score", "umbral", "decision", "model_version", "latencia_ms"))
+
+def leer_silver(spark: SparkSession, version: int) -> DataFrame:
+    return spark.read.format("delta").option("versionAsOf", version).load(SILVER)
+
+
+def leer_decisiones(spark: SparkSession) -> DataFrame:
+    return (spark.read.format("delta").load(RISK_DECISIONS)
+            .select("transaction_uuid", "risk_score", "umbral", "decision", "model_version", "latencia_ms"))
+
+
+def pendientes(spark: SparkSession, version: int) -> DataFrame:
+    """Transacciones de Silver (en `version`) que todavía no están en los hechos, con su decisión si ya existe."""
+    silver = leer_silver(spark, version)
     if existe(spark, ruta("fact_transferencias")):
         ya = spark.read.format("delta").load(ruta("fact_transferencias")).select("transaction_uuid")
         silver = silver.join(ya, "transaction_uuid", "left_anti")
-    nuevos = silver.join(decisiones, "transaction_uuid", "left").persist()
-    n = nuevos.count()
-    print(f"[job4] transacciones nuevas en Silver: {n:,}")
-    resumen = {"nuevas": n}
+    return silver.join(leer_decisiones(spark), "transaction_uuid", "left")
+
+
+def etapa_dimensiones(spark: SparkSession, version: int) -> dict:
+    cargar_etiquetas(spark)
     dim_canal(spark)
+    nuevos = pendientes(spark, version).persist()
+    n = nuevos.count()
+    print(f"[job4] Silver versión {version}: {n:,} transacciones nuevas para Gold")
+    resumen = {"nuevas": n}
     if n:
         dim_tiempo(spark, nuevos)
         dim_entidad(spark, nuevos)
         resumen.update(dim_cuenta(spark, nuevos))
-        hechos(spark, nuevos, con_etiquetas)
     nuevos.unpersist()
-    resumen["decisiones_completadas"] = completar_decisiones(spark, decisiones) if existe(spark, ruta("fact_transferencias")) else 0
+    return resumen
 
-    ok, r = (True, {}) if a.sin_calidad else calidad(spark)
+
+def etapa_hechos(spark: SparkSession, version: int) -> dict:
+    nuevos = pendientes(spark, version).persist()
+    n = nuevos.count()
+    if n:
+        hechos(spark, nuevos, existe(spark, ruta("etiquetas")))
+    nuevos.unpersist()
+    completadas = completar_decisiones(spark, leer_decisiones(spark)) if existe(spark, ruta("fact_transferencias")) else 0
+    print(f"[job4] hechos insertados: {n:,}, decisiones completadas: {completadas:,}")
+    return {"hechos_insertados": n, "decisiones_completadas": completadas}
+
+
+def registrar_version_procesada(version: int, hechos_total: int) -> None:
+    """Guarda en MongoDB la última versión de Silver que llegó a Gold sin fallas de calidad: el sensor
+    check_new_silver_data del DAG la compara con la versión actual."""
+    from breb.batch.comun import base_mongo
+    db = base_mongo()
+    if db is None:
+        print("[job4] sin MONGO_MIEMBROS: no se registra la versión procesada")
+        return
+    from datetime import datetime, timezone
+    db.sincronizacion.update_one({"_id": "gold"}, {"$set": {
+        "version_silver": version, "hechos": hechos_total, "ts": datetime.now(timezone.utc)}}, upsert=True)
+
+
+def etapa_calidad(spark: SparkSession, version: int, resumen: dict | None = None) -> bool:
+    resumen = dict(resumen or {})
+    ok, r = calidad(spark, leer_silver(spark, version))
     resumen.update(r)
-    resumen["segundos"] = round(time.perf_counter() - t0, 1)
     print("[job4] " + ", ".join(f"{k} {v:,}" if isinstance(v, int) else f"{k} {v}" for k, v in resumen.items()))
     fila = spark.createDataFrame([(str(resumen),)], "resumen STRING").select(
         F.current_timestamp().alias("ts"), F.lit(ok).alias("calidad_ok"),
-        F.lit(resumen.get("nuevas", 0)).cast("long").alias("nuevas"),
+        F.lit(resumen.get("nuevas")).cast("long").alias("nuevas"),
         F.lit(resumen.get("hechos")).cast("long").alias("hechos"),
         F.lit(resumen.get("precision")).cast("double").alias("precision"),
-        F.lit(resumen.get("recall")).cast("double").alias("recall"), "resumen")
-    fila.write.format("delta").mode("append").save(ruta("ejecuciones"))
-    print("JOB 4 OK" if ok else "JOB 4 CON FALLAS DE CALIDAD")
-    spark.stop()
+        F.lit(resumen.get("recall")).cast("double").alias("recall"), "resumen",
+        F.lit(version).cast("long").alias("version_silver"))
+    fila.write.format("delta").mode("append").option("mergeSchema", "true").save(ruta("ejecuciones"))
+    if ok:
+        registrar_version_procesada(version, resumen.get("hechos", 0))
+    return ok
+
+
+def sesion() -> SparkSession:
+    comprobar_servicios(SeaweedFS=os.environ.get("S3_ENDPOINT"), DynamoDB=os.environ.get("DYNAMODB_ENDPOINT"))
+    spark = SparkSession.builder.appName("job4-gold").getOrCreate()
+    spark.sparkContext.setLogLevel(os.environ.get("BREB_LOG", "WARN"))
+    spark.conf.set("spark.sql.shuffle.partitions", os.environ.get("JOB4_PARTICIONES", "4"))
+    return spark
+
+
+def ejecutar(spark: SparkSession, etapa: str = "todo", version: int | None = None, sin_calidad: bool = False) -> int:
+    t0 = time.perf_counter()
+    if version is None:
+        version = version_actual(spark)
+    resumen = {}
+    if etapa in ("todo", "dimensiones"):
+        resumen.update(etapa_dimensiones(spark, version))
+    if etapa in ("todo", "hechos"):
+        resumen.update(etapa_hechos(spark, version))
+    ok = True
+    if etapa in ("todo", "calidad") and not sin_calidad:
+        ok = etapa_calidad(spark, version, resumen | {"segundos": round(time.perf_counter() - t0, 1)})
+        print("JOB 4 OK" if ok else "JOB 4 CON FALLAS DE CALIDAD")
     return 0 if ok else 1
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--etapa", choices=["todo", "dimensiones", "hechos", "calidad"], default="todo")
+    ap.add_argument("--version-silver", type=int, help="versión de Silver a procesar (por defecto, la actual)")
+    ap.add_argument("--sin-calidad", action="store_true")
+    a = ap.parse_args()
+    spark = sesion()
+    codigo = ejecutar(spark, a.etapa, a.version_silver, a.sin_calidad)
+    spark.stop()
+    return codigo
 
 
 if __name__ == "__main__":

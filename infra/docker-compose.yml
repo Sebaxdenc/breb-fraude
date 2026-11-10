@@ -195,6 +195,7 @@ services:
     build:
       context: ..
       dockerfile: infra/spark/Dockerfile
+      target: spark
     hostname: spark-master
     environment: *spark-env
     command: ["spark-class", "org.apache.spark.deploy.master.Master",
@@ -404,9 +405,10 @@ services:
   # Perfil consumo: docker compose --profile consumo up -d
   postgres:
     image: postgres:15.19-bookworm
-    profiles: [consumo]
+    profiles: [consumo, orquestacion]
     restart: unless-stopped
-    env_file: [credenciales/postgres.env, credenciales/hms-db.env, credenciales/metabase-db.env]
+    env_file: [credenciales/postgres.env, credenciales/hms-db.env, credenciales/metabase-db.env,
+               credenciales/airflow-db.env]
     volumes:
       - postgres-datos:/var/lib/postgresql/data
       - ./postgres/iniciar_bases.sh:/docker-entrypoint-initdb.d/10-bases.sh:ro
@@ -419,6 +421,20 @@ services:
       resources:
         limits: {cpus: "0.5", memory: 384m}
 
+  # Crea en cada arranque las bases que falten (p. ej. la de Airflow en un volumen creado antes).
+  postgres-bases:
+    image: postgres:15.19-bookworm
+    profiles: [consumo, orquestacion]
+    restart: "no"
+    depends_on:
+      postgres: {condition: service_healthy}
+    env_file: [credenciales/postgres.env, credenciales/hms-db.env, credenciales/metabase-db.env,
+               credenciales/airflow-db.env]
+    environment:
+      PGHOST: postgres
+    volumes: ["./postgres/iniciar_bases.sh:/scripts/iniciar_bases.sh:ro"]
+    entrypoint: ["sh", "-c", "export PGPASSWORD=\"$$POSTGRES_PASSWORD\"; tr -d '\\r' < /scripts/iniciar_bases.sh | sh"]
+
   hive-metastore:
     image: breb-hms:local
     pull_policy: never
@@ -429,7 +445,7 @@ services:
     restart: unless-stopped
     hostname: hive-metastore
     depends_on:
-      postgres: {condition: service_healthy}
+      postgres-bases: {condition: service_completed_successfully}
       seaweedfs: {condition: service_healthy}
     env_file: [credenciales/hms-db.env, credenciales/s3.env]
     environment:
@@ -472,7 +488,7 @@ services:
     profiles: [consumo]
     restart: unless-stopped
     depends_on:
-      postgres: {condition: service_healthy}
+      postgres-bases: {condition: service_completed_successfully}
       trino: {condition: service_healthy}
     env_file: [credenciales/metabase-db.env]
     environment:
@@ -496,6 +512,56 @@ services:
       resources:
         limits: {cpus: "1.0", memory: 2g}
 
+  # ---------------------------------------------------------------- Orquestación: Airflow 3 (fase 5)
+  # docker compose --profile orquestacion up -d   →   http://localhost:8085 (usuario admin, credenciales/airflow.env)
+  # airflow standalone: api-server, scheduler, dag-processor y triggerer en un contenedor, con LocalExecutor y el
+  # metastore en PostgreSQL. Los DAG lanzan spark-submit en modo local dentro de este contenedor.
+  airflow:
+    image: breb-airflow:local
+    pull_policy: never
+    build:
+      context: ..
+      dockerfile: infra/spark/Dockerfile
+      target: airflow
+    profiles: [orquestacion]
+    restart: unless-stopped
+    hostname: airflow
+    depends_on:
+      postgres-bases: {condition: service_completed_successfully}
+      seaweedfs: {condition: service_healthy}
+      dynamodb-local: {condition: service_started}
+      mongo-1: {condition: service_healthy}
+    env_file: [credenciales/s3.env, credenciales/mongo-app.env, credenciales/airflow.env]
+    environment:
+      <<: *spark-env
+      MONGO_MIEMBROS: ${MONGO_MIEMBROS}
+      KAFKA_BOOTSTRAP: ${KAFKA_BOOTSTRAP}
+      SPARK_MASTER_UI: http://spark-master:8080
+      BREB_DATOS: /datos
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW__CORE__DAGS_FOLDER: /opt/breb/dags
+      AIRFLOW__CORE__PARALLELISM: "2"
+      AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_USERS: admin:admin
+      AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_PASSWORDS_FILE: /opt/airflow/claves_admin.json
+      AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://localhost:8080/execution/
+      AIRFLOW__API__WORKERS: "1"
+      AIRFLOW__DAG_PROCESSOR__REFRESH_INTERVAL: "60"
+    volumes: ["../datos:/datos", "airflow-logs:/opt/airflow/logs"]
+    # 8085 en el host: el 8080 es la interfaz del master de Spark
+    ports: ["127.0.0.1:8085:8080"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/api/v2/monitor/health', timeout=5)"]
+      interval: 30s
+      start_interval: 5s
+      start_period: 180s
+      timeout: 10s
+      retries: 5
+    deploy:
+      resources:
+        # bootstrap_state calcula el estado inicial dentro de este contenedor: unos 5,5 GB (decisión D4)
+        limits: {cpus: "3.0", memory: 8g}
+
   # ---------------------------------------------------------------- SNS y SQS locales (fase 6)
   moto:
     image: motoserver/moto:5.2.5
@@ -516,3 +582,4 @@ volumes:
   mongo-2-datos:
   mongo-3-datos:
   postgres-datos:
+  airflow-logs:

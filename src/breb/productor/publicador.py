@@ -126,16 +126,26 @@ def _fuente_de_eventos(ruta: str, desde_seq: int | None, maximo: int | None, fra
             yield ev["source_account"], ev, True, ev["seq"]
 
 
+def _solo_invalidos(n: int, semilla: int):
+    """n eventos inválidos sin transacciones reales: llenan la cuarentena sin mover la reproducción."""
+    for k, malo in enumerate(eventos_invalidos(n, semilla=semilla)):
+        malo["transaction_uuid"] = uuid_transaccion("invalido", semilla * 10_000_000 + 5_000_000 + k)
+        clave = malo.get("source_account") if isinstance(malo.get("source_account"), str) else "invalido"
+        yield clave, malo, False, None
+
+
 def publicar(ruta_eventos: str, bootstrap: str, topico: str, escalones: list[tuple[float, float]],
              frac_invalidos: float = 0.0, desde_seq: int | None = None, maximo: int | None = None,
-             semilla: int = 7, config_extra: dict | None = None, registro=print) -> dict:
+             semilla: int = 7, config_extra: dict | None = None, registro=print,
+             solo_invalidos: int | None = None) -> dict:
     from confluent_kafka import KafkaException, Producer  # import tardío: solo lo necesita el productor
 
     conf = {"bootstrap.servers": bootstrap, "client.id": "breb-productor", "acks": "all",
             "enable.idempotence": True, "linger.ms": 5, "compression.type": "lz4"}
     conf.update(config_extra or {})
     productor = Producer(conf)
-    fuente = _fuente_de_eventos(ruta_eventos, desde_seq, maximo, frac_invalidos, semilla)
+    fuente = (_solo_invalidos(solo_invalidos, semilla) if solo_invalidos
+              else _fuente_de_eventos(ruta_eventos, desde_seq, maximo, frac_invalidos, semilla))
     resultados: list[Escalon] = []
     ultimo_seq = None
     agotado = interrumpido = False

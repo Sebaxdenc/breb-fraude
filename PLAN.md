@@ -9,10 +9,10 @@ Plan para construir la arquitectura del Entregable 1 v2.0 (`documento/Entregable
 |---|---|---|
 | 0. Repositorio y contratos | S13 | 8 de 10 |
 | 1. Modelo dentro del Job 2 | S13 | 10 de 10 |
-| 2. Infraestructura local | S13 | 16 de 17 |
+| 2. Infraestructura local | S13 | 17 de 17 |
 | 3. Ingesta | S13–S14 | 7 de 7 |
 | 4. Streaming | S14 | 12 de 13 |
-| 5. Batch y orquestación | S15 | 3 de 7 |
+| 5. Batch y orquestación | S15 | 6 de 7 |
 | 6. Consumo y gobernanza | S15 | 7 de 8 |
 | 7. Pruebas y endurecimiento | S16 | 3 de 9 |
 | 8. Documento y sustentación | S16 | 0 de 6 |
@@ -23,7 +23,7 @@ Prioridad del equipo: mostrar el flujo completo funcionando. La latencia (D6) qu
 2. Tramo de la demo con alertas: puntuación fuera de línea del test y estado hasta ese punto · hecho
 3. Gold: Job 4 con el modelo en estrella y las etiquetas (fase 5) · hecho
 4. Trino con las tablas registradas, permisos, linaje y tablero de Metabase (fase 6) · hecho
-5. Airflow 3 con los tres DAG (fases 2 y 5)
+5. Airflow 3 con los tres DAG (fases 2 y 5) · código listo y probado sin Docker; falta correrlo en Docker
 6. Guion de la demo con perfiles escalonados para que quepa en 11,7 GB de WSL (D5)
 
 ---
@@ -60,7 +60,7 @@ Criterio del hito S13: `docker compose up` levanta todo con el perfil de desarro
 - [x] Perfil `consumo` (fase 2b): PostgreSQL 15.19, Hive Metastore 4.2.1, Trino 484 con el catálogo `lakehouse` (conector Delta) y Metabase 0.65.3.6. Se combina con `dev` o con `completo`
 - [x] `herramientas/infra/prueba_consulta.py` pasó sin Docker: Spark escribe en los tres buckets, Trino crea el esquema y registra las tablas en el metastore, las consultas coinciden y Trino ve un append de Spark sin volver a registrar la tabla (RF11)
 - [x] Perfil `consumo` en Docker en el equipo de la demo: **PRUEBA CONSULTA OK** en 142 s y Metabase conectado a Trino con el driver Starburst. `dev` + `consumo` usan 4,03 GiB; Metabase llegó a 1,46 GiB de 1,5 GiB, así que su tope sube a 2 GiB
-- [ ] Airflow 3 (fase 2c): imagen con el cliente de Spark para los DAG de la fase 5
+- [x] Airflow 3.3.2 (fase 2c): etapa `airflow` de `infra/spark/Dockerfile` sobre la imagen de Spark, perfil `orquestacion` con `airflow standalone` (LocalExecutor), metastore en PostgreSQL y usuario `admin`; interfaz en el puerto 8085. `infra/airflow/requirements.lock` se resolvió junto con las versiones de Spark (numpy 1.26.4, pandas 2.2.3, pyarrow 17). `postgres-bases` crea las bases de Hive, Metabase y Airflow en cada arranque, de forma idempotente
 - [x] Imagen de Spark (`infra/spark/Dockerfile`): Python 3.11, numpy 1.26.4, pandas 2.2.3, xgboost-cpu 3.2.0, Delta 3.3.3, JARs verificados por SHA-1, paquete `breb` y artefactos del modelo copiados con `COPY`
 - [x] Creación de tópicos (`infra/kafka/crear_topicos.sh`): `breb.transacciones.raw` con 6 particiones, `replication.factor=3`, `min.insync.replicas=2`, `message.timestamp.type=LogAppendTime` y 7 días de retención en `completo` (1 y 1 en `dev`); probado con un clúster nativo de 3 nodos
 - [x] Inicialización del replica set (`infra/mongo/iniciar_replica.js`): `electionTimeoutMillis=2000`, keyFile, usuario root y usuario `breb_app` con readWrite solo sobre `breb`; probado con 1 y 3 miembros, y es idempotente
@@ -84,7 +84,7 @@ Decisión D3: el productor publica directo en Kafka, sin API de ingesta.
 
 ## Fase 4 · Streaming (S14)
 Criterio del hito S14: un evento llega a Bronze, Silver y MongoDB; el Job 2 publica alertas; p99 < 3 s.
-- [x] Carga del estado inicial en MongoDB: `python -m breb.estado cargar` (lo que hará el DAG `bootstrap_state`)
+- [x] Carga del estado inicial en MongoDB: `python -m breb.estado cargar` (lo mismo hace el DAG `bootstrap_state`)
 - [x] Job 1 (`src/breb/streaming/job1_bronze.py`): Kafka → validación del contrato → Bronze append-only con `raw_payload`, `is_valid`, `validation_errors` y coordenadas de Kafka, particionado por fecha de ingesta; trigger de 30 s (RF2, RF5)
 - [x] Job 2 (`src/breb/streaming/job2_riesgo.py`): Kafka → validación → `dropDuplicatesWithinWatermark` → `foreachBatch` con `procesar_microbatch` → MongoDB, SNS (moto) y `risk_decisions` con `txnAppId`/`txnVersion`, `decision_ts` y `latencia_ms`; trigger de 1 s (RF4, RF10, RF13, RF14)
 - [x] Ventanas del RF3 en el Job 2: 5 min por ordenante y 10 min por receptora, salto de 1 min, modo update y watermark de 2 min; la ventana más reciente queda en `cuentas.ventanas` de MongoDB. Planificador FAIR para que no le quiten núcleos a las decisiones
@@ -102,16 +102,16 @@ Criterio del hito S14: un evento llega a Bronze, Silver y MongoDB; el Job 2 publ
 - [x] Job 4 (`src/breb/batch/job4_gold.py`): `fact_transferencias`, `dim_cuenta` (SCD 2 sobre entidad y nivel de riesgo), `dim_entidad_financiera`, `dim_canal` y `dim_tiempo` en `lakehouse-gold/analytics/`, incremental con MERGE e idempotente; completa las decisiones que llegan tarde. Probado sin Docker con Spark local (RF7)
 - [x] Job 4 en Docker con el tramo de la demo: **JOB 4 OK** en 65 s; 15.000 hechos, 13.935 cuentas, etiquetas de las 1.038.880 transacciones del test; 25 alertas con 13 verdaderos positivos, 12 falsos positivos y 12 falsos negativos (precisión 0,52, recall 0,52) ([#17](https://github.com/Sebaxdenc/breb-fraude/pull/17))
 - [x] Carga de las etiquetas `Is Laundering` a Gold (`etiquetas`) y controles de calidad en el Job 4: Silver completo en los hechos, claves no nulas, integridad con `dim_tiempo`, una versión vigente por cuenta, y precisión y recall de las alertas; cada ejecución queda en `ejecuciones`
-- [ ] DAG `breb_lakehouse_pipeline` cada 15 min: sensores → dimensiones → hechos → calidad → sincronización a MongoDB → OPTIMIZE y VACUUM (RF9)
-- [ ] DAG `reprocess_quarantine` bajo demanda (RF12)
-- [ ] DAG `bootstrap_state`: `breb.estado.inicial.calcular` + `AlmacenMongo.cargar_estado_inicial` (RF8)
-- [ ] Los tres DAG en verde de punta a punta
+- [x] DAG `breb_lakehouse_pipeline` cada 15 min: `check_streaming_health` y `check_new_silver_data` → dimensiones → hechos → calidad → `sync_profiles_to_mongo` → OPTIMIZE y VACUUM (con `all_done`). Las tres etapas del Job 4 leen Silver en la versión que fija el sensor (time travel); 3 reintentos con retroceso exponencial, `catchup=False` y `max_active_runs=1` (RF9). Probado sin Docker: etapas por separado, sensor, salud del streaming, perfiles incrementales (la segunda corrida no escribe nada) y OPTIMIZE (de 33 a 10 archivos)
+- [x] DAG `reprocess_quarantine` bajo demanda (RF12): esquema corregido (contrato 1.0 más correcciones que no inventan datos), MERGE a Silver sin duplicados, resultado por evento en `silver.reprocesos_cuarentena` y disparo del pipeline. Sin Docker: recuperó 10 de 41 eventos inválidos y la segunda corrida no cambió nada
+- [x] DAG `bootstrap_state` bajo demanda (RF8): parámetro `inicio` (`tramo` o `corte`); comprueba que el streaming esté apagado, prepara los eventos y el tramo si faltan, carga el estado y lo verifica
+- [ ] Los tres DAG en verde de punta a punta en Docker
 
 ## Fase 6 · Consumo y gobernanza (S15)
 - [x] SNS y SQS en moto: tópico `fraud-alerts-critical`, cola `breb-entidad-<id>` por entidad con filtro por el atributo `entidades` (origen y destino), y cola `breb-analistas-fraude` sin filtro en lugar del correo (RF15)
 - [x] Servicio de la entidad (`python -m breb.entidad --entidades 70,12`): retiene fondos en la cuenta destino o bloquea la ordenante, lo registra en `estado_retencion` y descarta las reentregas por `transaction_uuid`; bandeja de los analistas con `--analistas`. Probado sin Docker con moto y MongoDB
 - [ ] El Job 2 usa `estado_retencion` en las evaluaciones siguientes (sección 1.4)
-- [x] Tablas de las tres capas registradas en el Hive Metastore por Trino (`python -m breb.consumo registrar`): `lakehouse.bronze.transacciones`, `lakehouse.silver.transacciones` y en `lakehouse.gold` las 9 de Gold, `risk_decisions` y `progreso_streaming`; idempotente (RF11)
+- [x] Tablas de las tres capas registradas en el Hive Metastore por Trino (`python -m breb.consumo registrar`): `lakehouse.bronze.transacciones`, `lakehouse.silver.transacciones`, `lakehouse.silver.reprocesos_cuarentena` y en `lakehouse.gold` las 9 de Gold, `risk_decisions` y `progreso_streaming`; idempotente (RF11)
 - [x] Reglas de acceso de Trino (`infra/trino/etc/reglas.json`): `breb_admin` registra tablas; `cumplimiento` lee las tres capas; `analista` y `metabase` solo Gold; cualquier otro usuario, nada. `python -m breb.consumo permisos` comprueba 10 casos
 - [x] Tablero de Metabase creado por la API (`python -m breb.consumo tablero`): las cuatro preguntas de la sección 1.3 (en 5 preguntas), alertas emitidas, desempeño frente a las etiquetas, latencia por minuto y salud del streaming
 - [x] Linaje (`python -m breb.consumo linaje [uuid]`), como `cumplimiento`: Bronze con coordenadas de Kafka, Silver, decisión, hechos con nivel de riesgo de las cuentas y acciones de las entidades en MongoDB; 1,1 s (RNF-06)
@@ -142,13 +142,14 @@ Criterio del hito S14: un evento llega a Bronze, Silver y MongoDB; el Job 2 publ
 | # | Decisión | Opciones | Hito |
 |---|---|---|---|
 | D6 | Latencia del Job 2 (RNF-02) · **pospuesta** | Segunda corrida: p99 de 99 s. En micro-batches de 1.400 a 4.800 transacciones, variables y modelo tardan menos de 0,5 s; el tiempo se va en leer Kafka con la validación en Python (de 2,7 a 62 s) y en MongoDB (de 0,9 a 6,9 s para leer y de 2,5 a 12,4 s para escribir). En la corrida del tramo, a 50 ev/s, el p99 fue de 53 s y el productor vio p99 de 5,5 s hacia Kafka mientras corrían los jobs: el equipo está saturado. Ideas, en orden: (1) validar el contrato con expresiones de Spark en lugar de la pandas UDF con jsonschema, en los Jobs 1 y 2; (2) MongoDB con 2 GB de caché, escribir solo los campos que cambian en vez de `streaming` y `streaming_prev` completos, y revisar con `mongostat` si el cuello es el disco de WSL; (3) triggers de 60 s para los Jobs 1 y 3 durante la demo; (4) declarar una tasa de demo más baja o medir en Linux nativo con más núcleos | S16 |
-| D4 | Estado inicial en el equipo de 16 GB | Calcularlo en Python pide unos 5,5 GB, que no caben junto al stack completo. Opciones: calcularlo en Kaggle y exportar los documentos (unos 390 MB sin comprimir) para que el DAG `bootstrap_state` solo los cargue; correr el DAG con el resto del stack apagado; o bajar la memoria de `cargar` y `procesar` (tipos categóricos, sin guardar las variables crudas) | S15 |
+| D4 | Estado inicial en el equipo de 16 GB | Calcularlo en Python pide unos 5,5 GB, que no caben junto al stack completo. Opciones: calcularlo en Kaggle y exportar los documentos (unos 390 MB sin comprimir) para que el DAG `bootstrap_state` solo los cargue; correr el DAG con el resto del stack apagado; o bajar la memoria de `cargar` y `procesar` (tipos categóricos, sin guardar las variables crudas). Por ahora, el DAG corre dentro del contenedor de Airflow (tope de 8 GiB) y falla si encuentra jobs de streaming corriendo | S15 |
 | D5 | Perfiles para la demo | Propuesta: la demo de punta a punta corre `dev` + `consumo` (y Airflow); las pruebas de falla corren `completo` sin `consumo`. Juntos, los topes de memoria suman 16,7 GiB frente a 11,68 GiB de WSL; `dev` + `consumo` usaron 4,03 GiB en reposo. Se decide con la RAM medida en la fase 7 | S16 |
 
 ## Hallazgos que el equipo debe conocer
 - **El motor replica el notebook exactamente, incluidas sus particularidades.** `is_reciprocal_loop` vale 1 cuando el mismo par ordenante→destino ya transó antes, no cuando el destino le había enviado al ordenante: el notebook agrega y busca la clave invertida. `net_flow` combina acumulados de dos cuentas distintas. No se corrigen porque el modelo se entrenó así.
 - **Las sumas usan compensación de Kahan** porque `groupby().cumsum()` de pandas la usa. Sin ella, algunas variables cambian en el último decimal.
-- **El motor replica la aritmética de numexpr.** En Kaggle el notebook procesa unos 5 millones de filas y, con más de 1.000.000, pandas calcula con numexpr: float32 operado con un escalar da float64 y `x ** 2` usa pow() de la libm (en el 0,08 % de los montos no es igual a `x * x`). El Job 2 trabaja con lotes chicos, donde pandas usa NumPy, así que `derivar` hace esas conversiones a mano. Afecta `sender_std_amt`, `z_score_amount_sender`, `pass_through_velocity` y `passthrough_velocity_true`. Las pruebas son bit a bit y suponen Linux x86-64, como Kaggle y la imagen de Spark.
+- **El motor replica la aritmética de numexpr.** En Kaggle el notebook procesa unos 5 millones de filas y, con más de 1.000.000, pandas calcula con numexpr: float32 operado con un escalar da float64 y `x ** 2` usa pow() de la libm (en el 0,08 % de los montos no es igual a `x * x`). El Job 2 trabaja con lotes chicos, donde pandas usa NumPy, así que `derivar` hace esas conversiones a mano. Afecta `sender_std_amt`, `z_score_amount_sender`, `pass_through_velocity` y `passthrough_velocity_true`. Las pruebas son bit a bit, salvo lo de `log1p` del punto siguiente, y suponen Linux x86-64, como Kaggle y la imagen de Spark.
+- **El último bit de `np.log1p` en float32 depende de la CPU.** NumPy elige al importar una versión vectorizada si la CPU tiene AVX-512 y la de la libm si no. Entre las dos hay hasta 2 ULP en cerca del 3 % de las filas de `pass_through_velocity` y `passthrough_velocity_true`; el score no cambia (menos de 1e-6, mismas decisiones). La referencia sintética se generó sin AVX-512, así que las pruebas toleran esos 2 ULP solo en esas dos variables.
 - **`S3DynamoDBLogStore` no deja configurar el endpoint de DynamoDB** (Delta 3.3.3): siempre usa el de la región de AWS. `infra/spark/logstore/` toma la fuente oficial, le agrega la opción `ddb.endpoint` y reemplaza la clase en el JAR. En AWS se usa el JAR original, sin esa opción.
 - **Kafka 3.6 ya no tiene soporte ni imagen oficial** (`apache/kafka` empieza en 3.7). El stack usa 4.3.2; el conector de Spark 3.5 trae kafka-clients 3.4.1, que funciona con brókers 4.x.
 - **Delta avisa `Found Delta commit N with a timestamp ... greater than the next commit timestamp`.** S3 guarda la hora de modificación al segundo, así que dos commits en el mismo segundo quedan con la misma hora, y Delta suma 1 ms al segundo. Solo afecta la consulta por hora (`TIMESTAMP AS OF`); la consulta por versión no cambia.
