@@ -80,7 +80,7 @@ Reglas para hablar:
 ### Lámina 10 · Resultados medidos — Sebastian (0:50)
 **En pantalla:** tabla de requisitos con su estado.
 
-> Estos números se midieron en el portátil de la demo, de 16 GB. Del productor a Kafka, el p99 estuvo entre 49 y 235 milisegundos hasta 1.000 eventos por segundo: cumple. No perdimos ni duplicamos eventos: 71.910 de 71.910. La paridad con el notebook es exacta. Gold se arma en 65 segundos para el tramo de la demo, con precisión y recall de 0,52 contra las etiquetas reales. El linaje de una alerta se reconstruye en 6 segundos, y el requisito era menos de 5 minutos. Lo que no cumple es la latencia de la decisión: 53 segundos de p99 a 50 eventos por segundo. Y faltan las pruebas de falla. Samuel explica la latencia.
+> Estos números se midieron en el portátil de la demo, de 16 GB. Del productor a Kafka, el p99 estuvo entre 49 y 235 milisegundos hasta 1.000 eventos por segundo: cumple. No perdimos ni duplicamos eventos: 71.910 de 71.910. La paridad con el notebook es exacta. Gold se arma en 65 segundos para el tramo de la demo, con precisión y recall de 0,52 contra las etiquetas reales, y Airflow ya corrió el pipeline completo en Docker, en verde, en 11 minutos y 39 segundos. El linaje de una alerta se reconstruye en 6 segundos, y el requisito era menos de 5 minutos. Lo que no cumple es la latencia de la decisión: 53 segundos de p99 a 50 eventos por segundo. Y faltan las pruebas de falla. Samuel explica la latencia.
 
 ### Lámina 11 · Qué falló: la latencia — Samuel (0:50)
 **En pantalla:** el gráfico de latencia y la lista de errores encontrados.
@@ -112,9 +112,11 @@ Nathalia ejecuta los comandos de `demo_en_vivo.md` (pasos D1 a D8). Los demás n
 | 3:15 | Samuel | Termina el productor: tabla del RF1 | "p99 fuente → Kafka de tantos milisegundos: cumple el RF1." |
 | 3:30 | Mateo | D5. Jobs al día (y, en el plan B, se apagan los jobs de streaming) | "Silver ya tiene todo. En el plan B: apagamos el streaming para liberar memoria del portátil; en AWS corren en clústeres separados." |
 | 3:45 | Mateo | D6. Airflow: quitar la pausa de `breb_lakehouse_pipeline`, vista Graph | "check_new_silver_data fija la versión de Silver. Dims y hechos leen esa versión; si una tarea falla, se reintenta sobre los mismos datos." |
-| 5:30 | Mateo | Log de `data_quality_checks` | "Hechos igual a Silver, integridad con dim_tiempo, una versión vigente por cuenta, y precisión y recall contra las etiquetas reales." |
+| 5:30 | Mateo | Log de `data_quality_checks` (si la corrida todavía va en `silver_to_gold_*`, mostrar esa tarea en curso) | "Hechos igual a Silver, integridad con dim_tiempo, una versión vigente por cuenta, y precisión y recall contra las etiquetas reales." |
 | 6:15 | Sebastian | D7. Consulta a Gold (Trino o Metabase) | "Pregunta 4 del E1: tasa de alertas por canal. Y el desempeño del modelo con las etiquetas, que nunca viajaron en el evento." |
 | 7:15 | Sebastian | D8. `python -m breb.consumo linaje` | "Como cumplimiento: de la coordenada en Kafka hasta la acción de la entidad, en segundos." |
+
+**Orden B:** si en el ensayo `silver_to_gold_facts` tardó más de 2 minutos desde que arranca la corrida, D8 (linaje) va antes y D7 (consulta a Gold) al final, cuando los hechos estén en verde. La primera corrida en Docker tardó 11 min 39 s completa; `demo_en_vivo.md` ("Tiempos de Airflow") dice cómo medir cada tarea y qué decir si no alcanza.
 
 Si algo falla, quien está hablando dice qué falló, por qué (con la evidencia en pantalla) y cómo se arregla. `demo_en_vivo.md` tiene la tabla de fallas probables con esas tres respuestas. Un fallo bien explicado mantiene la nota de defensa; uno sin explicar la baja.
 
@@ -154,6 +156,7 @@ Se muestra solo si preguntan por fallas.
 | Completitud | 71.910 de 71.910 en Bronze, Silver y risk_decisions, sin duplicados |
 | Tramo de la demo | 15.000 transacciones desde el seq 6.814.261; 25 alertas, 13 de lavado real; precisión 0,52 y recall 0,52 |
 | Gold | Job 4 en 65 s; 15.000 hechos; 13.935 cuentas en dim_cuenta |
+| Airflow en Docker | `breb_lakehouse_pipeline` completo en verde en 11 min 39 s (primera corrida: 8 tareas en serie, cada una un `spark-submit` en `local[2]`) |
 | Estado inicial | 704.707 cuentas, 1.349.332 pares y 41.815 bancos; unos 5,5 GB para calcularlo |
 | Consumo | 11 tablas registradas en Trino (12 con `silver.reprocesos_cuarentena`); 10 de 10 casos de permisos; linaje en 6 s (objetivo < 5 min) |
 | Memoria | WSL con 11,68 GiB; dev + consumo en reposo 4,03 GiB; completo con la prueba de Delta 4,59 GiB |
@@ -162,5 +165,5 @@ Se muestra solo si preguntan por fallas.
 
 ## Ensayo
 1. **Dos días antes:** ensayo completo con cronómetro, incluida la demo con el plan A y con el plan B. Anotar la memoria de `docker stats` en cada paso.
-2. **El día anterior:** ensayo final (PLAN.md, fase 7). Cada integrante responde en voz alta cinco preguntas al azar de `preguntas_defensa.md` sobre partes que no implementó.
+2. **El día anterior:** ensayo final (`docs/plan_e2.md`, fase 7). Cada integrante responde en voz alta cinco preguntas al azar de `preguntas_defensa.md` sobre partes que no implementó.
 3. **El día de la sustentación:** preparación de `demo_en_vivo.md` 60 minutos antes. Llevar `slides.pdf` en una memoria USB.

@@ -6,7 +6,7 @@ Cada respuesta tiene:
 - **Respuesta corta:** lo que se dice en 30 a 45 segundos. Primero la decisión, después la evidencia (un número o un archivo), después lo que se sacrificó.
 - **Si piden más:** detalles y la parte del código que se abre.
 
-Los enlaces apuntan a `main` y funcionan cuando se fusionen los PR #20 (Airflow) y #21 (este material). La sección final, "Dónde está cada cosa", reúne los enlaces al código.
+Los enlaces apuntan a `main`. La sección final, "Dónde está cada cosa", reúne los enlaces al código.
 
 ---
 
@@ -156,6 +156,8 @@ El resto de los efectos:
 
 ### Orquestación
 **¿Por qué las tareas Spark de Airflow corren en local y no en el clúster?** Los jobs de streaming ocupan todos los núcleos del worker; un batch enviado al clúster esperaría núcleos libres. `local[2]` con 2 GB de driver corre dentro del contenedor de Airflow. Con más recursos se cambia `BREB_SPARK_MASTER=spark://spark-master:7077` (`orquestacion.py:11`).
+
+**¿Por qué el pipeline tarda casi 12 minutos si corre cada 15?** La primera corrida en Docker (2026-11-10) tardó 11 min 39 s completa. Las 8 tareas van en serie (`max_active_tasks=1`, `breb_lakehouse_pipeline.py:40`) y cada tarea de Spark arranca un `spark-submit` nuevo en `local[2]` con 2 GB, dentro del contenedor de Airflow (`orquestacion.py:16-19`); la primera corrida además carga las 1.038.880 etiquetas y hace OPTIMIZE y VACUUM de todas las tablas. Cabe en los 15 minutos, y si una corrida se alarga, `max_active_runs=1` hace que la siguiente espere en vez de pisarla. Para bajarlo: dimensiones, hechos y calidad en un solo `spark-submit` (la orden `todo` de `lakehouse.py` ya existe), OPTIMIZE y VACUUM en un DAG diario, y las tareas en el clúster de Spark cuando haya núcleos libres; en AWS, EMR Serverless.
 
 **¿Qué pasa si el pipeline falla a mitad?** Cada tarea tiene hasta 3 reintentos con retroceso exponencial. Las etapas leen Silver en la versión que fijó `check_new_silver_data` (time travel), así que el reintento procesa los mismos datos; los MERGE de solo inserción no duplican. La versión procesada se registra en MongoDB solo cuando la calidad pasa, así que la siguiente corrida vuelve a intentar lo que faltó. Si la calidad falla, no se sincronizan perfiles.
 

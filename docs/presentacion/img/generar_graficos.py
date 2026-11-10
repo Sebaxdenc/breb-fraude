@@ -1,4 +1,4 @@
-"""Gráfico de latencia del Job 2 para las láminas (datos de PLAN.md, decisión D6).
+"""Gráfico de latencia del Job 2 para las láminas (datos de docs/plan_e2.md, decisión D6).
 
 Uso: python generar_graficos.py   (escribe latencia.png en esta carpeta; necesita matplotlib)
 """
