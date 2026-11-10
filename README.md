@@ -54,7 +54,7 @@ docker compose --profile consumo --profile orquestacion --profile herramientas b
 docker compose --profile consumo --profile orquestacion --profile herramientas --profile streaming pull
 
 # 2. Infraestructura y Airflow, desde cero
-docker compose down -v
+docker compose --profile "*" down -v                    # todos los perfiles: así también se borran los checkpoints
 docker compose up -d                                    # Kafka, MongoDB, SeaweedFS, DynamoDB Local, Spark, moto
 docker compose --profile orquestacion up -d             # PostgreSQL y Airflow (http://localhost:8085)
 docker compose ps -a                                    # los servicios de inicio en "Exited (0)" y airflow "healthy"
@@ -126,7 +126,7 @@ Los topes de memoria de los contenedores suman 8,0 GiB en `dev`, 12,1 GiB en `co
 
 En el perfil completo, **todos** los comandos de `docker compose` llevan `--env-file completo.env`. Para cambiar de perfil hay que borrar los volúmenes: el quórum de Kafka y el replica set quedan guardados en ellos.
 ```powershell
-docker compose down -v
+docker compose --profile "*" down -v
 ```
 
 ### Verificar
@@ -158,12 +158,12 @@ Opciones de `publicar`:
 - `--tramo` publica solo el tramo de la demo (`datos/productor/tramo_demo.json`).
 - `--solo-invalidos N` publica N eventos inválidos y nada más (para la cuarentena); no mueve el progreso del productor.
 
-Al final imprime, por escalón, la tasa lograda y la latencia fuente → Kafka (p50 y p99, RF1: p99 < 300 ms), y guarda el informe en `datos/mediciones/`. Después de `docker compose down -v`, el tópico queda vacío: la siguiente corrida va sin `--continuar`.
+Al final imprime, por escalón, la tasa lograda y la latencia fuente → Kafka (p50 y p99, RF1: p99 < 300 ms), y guarda el informe en `datos/mediciones/`. Después de `docker compose --profile "*" down -v`, el tópico queda vacío: la siguiente corrida va sin `--continuar`.
 
 ### Streaming (fase 4)
 Los Jobs 1, 2 y 3 corren en el perfil `streaming`. El Job 2 necesita el estado de MongoDB al corte de validación, así que se reproduce desde cero:
 ```powershell
-docker compose down -v                                             # tópico, MongoDB y lakehouse vacíos
+docker compose --profile "*" down -v                               # tópico, MongoDB, lakehouse y checkpoints vacíos
 docker compose build
 docker compose up -d
 docker compose run --rm spark-cliente python -m breb.estado cargar  # unos 5,5 GB de RAM y de 3 a 5 minutos
@@ -178,7 +178,7 @@ Para seguir publicando sin volver a cargar el estado, se deja el stack arriba y 
 ### Demo con alertas (tramo)
 Con el umbral del modelo hay en promedio una alerta cada 3.900 transacciones. La demo arranca en el tramo de 15.000 transacciones con más alertas (25 en LI-Small), que `tramo` elige y guarda en `datos/productor/tramo_demo.json`; `cargar`, `entidad` y `publicar` lo leen con `--tramo`.
 ```powershell
-docker compose --profile streaming down -v                          # todo vacío: la demo empieza en el tramo
+docker compose --profile "*" down -v                                # todo vacío: la demo empieza en el tramo
 docker compose build
 docker compose up -d
 docker compose run --rm spark-cliente python -m breb.estado tramo    # solo la primera vez: 6 GB y 5 min
@@ -267,11 +267,14 @@ docker compose --profile consumo run --rm spark-cliente python -m breb.consumo t
 Para consultar a mano: `docker compose --profile consumo exec trino trino --user cumplimiento --catalog lakehouse`.
 
 ### Apagar
-`docker compose down` detiene todo y conserva los datos; `docker compose down -v` también borra los volúmenes.
+`docker compose --profile "*" down` detiene todo y conserva los datos; con `-v` también borra los volúmenes.
+
+Sin `--profile`, `down` solo quita los servicios que no tienen perfil: los jobs de streaming, Airflow, Trino y Metabase siguen ahí, y Compose no puede borrar un volumen que un contenedor todavía usa. Así sobreviven los checkpoints de los jobs (volumen `breb_checkpoints`) aunque Kafka y el lakehouse queden vacíos. `--profile "*"` activa todos los perfiles.
 
 ### Problemas comunes
 - **`lookup production.cloudfront.docker.com: no such host`** al descargar imágenes: Windows no resolvió el dominio del que Docker Hub sirve las capas. Repetir `docker compose pull`. Si sigue fallando, comparar `Resolve-DnsName production.cloudfront.docker.com` con `Resolve-DnsName production.cloudfront.docker.com -Server 1.1.1.1`. Si solo el segundo responde, el DNS de la red falla: cambiar el DNS del adaptador a `1.1.1.1` y `8.8.8.8` (Configuración → Red e Internet → Wi-Fi → Propiedades de hardware → Asignación de servidor DNS) o usar otra red, y reiniciar Docker Desktop.
-- **`No writable volumes and no free volumes left`** en el log de SeaweedFS, o Spark reintentando escrituras durante minutos: SeaweedFS se quedó sin volúmenes para un bucket. `WEED_MASTER_VOLUME_GROWTH_COPY_1=1` en `docker-compose.yml` lo evita; si pasa, liberar disco en Windows o borrar los datos de prueba con `docker compose down -v`.
+- **`No writable volumes and no free volumes left`** en el log de SeaweedFS, o Spark reintentando escrituras durante minutos: SeaweedFS se quedó sin volúmenes para un bucket. `WEED_MASTER_VOLUME_GROWTH_COPY_1=1` en `docker-compose.yml` lo evita; si pasa, liberar disco en Windows o borrar los datos de prueba con `docker compose --profile "*" down -v`.
+- **`verificar_fase4.py` se queda en `esperando: Bronze 0, Silver 0, risk_decisions 0` con Kafka lleno**: los jobs arrancaron con los checkpoints de una corrida anterior, casi siempre porque se reinició con `docker compose down -v` sin `--profile "*"`. Si la corrida anterior publicó el mismo tramo, los offsets guardados coinciden con los del tópico nuevo y los jobs creen que ya lo leyeron todo; si publicó más, fallan por datos perdidos y se reinician sin parar. `docker volume inspect breb_checkpoints --format "{{.CreatedAt}}"` muestra una fecha anterior al reinicio. Se arregla reiniciando desde cero con `docker compose --profile "*" down -v`.
 - **`seaweedfs: Name or service not known`** (o `kafka-1`, `mongo-1`): la infraestructura está apagada. `docker compose --profile streaming stop` apaga **todos** los servicios, no solo los jobs; para apagar solo los jobs: `docker compose stop job1-bronze job2-riesgo job2-ventanas job3-silver`. Se recupera con `docker compose up -d`; los datos se conservan.
 - **`image "docker.io/library/breb-spark:local": already exists`** al construir: pasaba cuando varios servicios tenían la misma sección `build`. Ahora solo `spark-master` construye la imagen y los demás la reutilizan.
 
