@@ -8,8 +8,9 @@ Orden de efectos en el micro-batch B (RNF-03):
 1. leer el estado de MongoDB vigente antes de B (si B es un reintento, `streaming_prev`);
 2. calcular variables en orden de seq, puntuar y decidir;
 3. escribir el estado nuevo con batch_id = B;
-4. (Spark) publicar las alertas en SNS y agregar las decisiones a risk_decisions con
-   txnAppId/txnVersion = B. Si falla después del paso 3, el reintento recalcula lo mismo;
+4. (Spark) publicar las alertas en SNS y guardar las decisiones en el archivo batch_<B>.parquet, que otra
+   consulta agrega a risk_decisions (fuente de archivos → sink de Delta, exactly-once con su checkpoint).
+   Si falla después del paso 3, el reintento recalcula lo mismo y reescribe el mismo archivo;
    las alertas pueden repetirse y los consumidores las descartan por transaction_uuid.
 """
 from __future__ import annotations

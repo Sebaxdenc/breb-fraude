@@ -15,7 +15,7 @@ Plan para construir la arquitectura del Entregable 1 v2.0 (`documento/Entregable
 | 5. Batch y orquestación | S15 | 6 de 7 |
 | 6. Consumo y gobernanza | S15 | 7 de 8 |
 | 7. Pruebas y endurecimiento | S16 | 3 de 9 |
-| 8. Documento y sustentación | S16 | 0 de 6 |
+| 8. Documento y sustentación | S16 | 1 de 7 |
 
 ## Camino a la demo de punta a punta
 Prioridad del equipo: mostrar el flujo completo funcionando. La latencia (D6) queda pospuesta.
@@ -24,7 +24,7 @@ Prioridad del equipo: mostrar el flujo completo funcionando. La latencia (D6) qu
 3. Gold: Job 4 con el modelo en estrella y las etiquetas (fase 5) · hecho
 4. Trino con las tablas registradas, permisos, linaje y tablero de Metabase (fase 6) · hecho
 5. Airflow 3 con los tres DAG (fases 2 y 5) · código listo y probado sin Docker; falta correrlo en Docker
-6. Guion de la demo con perfiles escalonados para que quepa en 11,7 GB de WSL (D5)
+6. Guion de la demo con perfiles escalonados para que quepa en 11,7 GB de WSL (D5) · borrador listo en `docs/presentacion/`; falta el ensayo
 
 ---
 
@@ -86,7 +86,7 @@ Decisión D3: el productor publica directo en Kafka, sin API de ingesta.
 Criterio del hito S14: un evento llega a Bronze, Silver y MongoDB; el Job 2 publica alertas; p99 < 3 s.
 - [x] Carga del estado inicial en MongoDB: `python -m breb.estado cargar` (lo mismo hace el DAG `bootstrap_state`)
 - [x] Job 1 (`src/breb/streaming/job1_bronze.py`): Kafka → validación del contrato → Bronze append-only con `raw_payload`, `is_valid`, `validation_errors` y coordenadas de Kafka, particionado por fecha de ingesta; trigger de 30 s (RF2, RF5)
-- [x] Job 2 (`src/breb/streaming/job2_riesgo.py`): Kafka → validación → `dropDuplicatesWithinWatermark` → `foreachBatch` con `procesar_microbatch` → MongoDB, SNS (moto) y `risk_decisions` con `txnAppId`/`txnVersion`, `decision_ts` y `latencia_ms`; trigger de 1 s (RF4, RF10, RF13, RF14)
+- [x] Job 2 (`src/breb/streaming/job2_riesgo.py`): Kafka → validación → `dropDuplicatesWithinWatermark` → `foreachBatch` con `procesar_microbatch` → MongoDB, SNS (moto) y `risk_decisions` con `decision_ts` y `latencia_ms`; trigger de 1 s (RF4, RF10, RF13, RF14). En lugar de `txnAppId`/`txnVersion` (Entregable 1), cada micro-batch escribe `batch_<id>.parquet` y otra consulta lo agrega a Delta (ver [#14](https://github.com/Sebaxdenc/breb-fraude/pull/14))
 - [x] Ventanas del RF3 en el Job 2: 5 min por ordenante y 10 min por receptora, salto de 1 min, modo update y watermark de 2 min; la ventana más reciente queda en `cuentas.ventanas` de MongoDB. Planificador FAIR para que no le quiten núcleos a las decisiones
 - [x] RocksDB como state store y `spark.sql.shuffle.partitions` igual a los núcleos de cada job (ADR 02)
 - [x] `StreamingQueryListener` → tabla Delta de métricas `lakehouse-gold/metricas/progreso_streaming` (duración, filas por segundo, `maxOffsetsBehindLatest`, estado)
@@ -133,7 +133,8 @@ Criterio del hito S14: un evento llega a Bronze, Silver y MongoDB; el Job 2 publ
 - [ ] Publicar el `.drawio` y poner su enlace en la sección 3
 - [ ] Actualizar el documento: `transaction_uuid` es UUID v5 (no v4) y resultado de la decisión D2
 - [ ] Actualizar el documento: el productor publica directo en Kafka, sin API de ingesta (D3); Kafka 4.3 en lugar de 3.6, SeaweedFS en lugar de MinIO, el parche de `S3DynamoDBLogStore`, Hive Metastore 4.2.1, Trino 484 con `register_table` y el perfil `consumo`
-- [ ] Guion de la demo con los pasos del diagrama
+- [x] Guion de la sustentación, 15 láminas, guía de la demo en vivo y preguntas de la defensa (`docs/presentacion/`), con el diagrama de la arquitectura implementada (`docs/arquitectura/`)
+- [ ] Bitácora de delegación a agentes de IA (`docs/bitacora_ia.md`) revisada y completada por el equipo
 - [ ] Ensayo de preguntas: explicar cualquier componente del diagrama
 
 ---

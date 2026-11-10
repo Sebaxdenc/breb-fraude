@@ -9,3 +9,6 @@ __pycache__/
 !tests/fixtures/**
 .ipynb_checkpoints/
 build/
+
+# vistas previas que genera docs/presentacion/construir_slides.py
+docs/presentacion/vista/

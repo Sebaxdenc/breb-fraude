@@ -1,0 +1,11 @@
+# Punto de entrada del stack en la raíz del repositorio. La definición está en infra/docker-compose.yml, junto a
+# las credenciales, los scripts de inicio y los perfiles (infra/.env e infra/completo.env).
+# Desde la raíz y desde infra/ se obtiene el mismo proyecto (breb), con los mismos servicios y volúmenes:
+#   docker compose up -d                                 # perfil dev
+#   docker compose --profile streaming up -d             # Jobs 1, 2 y 3
+#   docker compose --env-file infra/completo.env up -d   # perfil completo (desde infra/: --env-file completo.env)
+# Instrucciones completas en README.md, sección "Correr el pipeline desde cero".
+name: breb
+
+include:
+  - path: infra/docker-compose.yml
