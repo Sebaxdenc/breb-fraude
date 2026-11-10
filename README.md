@@ -2,7 +2,7 @@
 
 Proyecto final de ST1630 Sistemas Intensivos en Datos (EAFIT, 2026-2). Implementación de la arquitectura del Entregable 1 v2.0: Kafka, Spark Structured Streaming, Delta Lake, MongoDB, Airflow, Trino, Metabase y alertas por SNS/SQS, con un modelo XGBoost de Kaggle dentro del Job 2.
 
-- **Plan y avance:** [PLAN.md](PLAN.md)
+- **Plan y avance:** [docs/plan_e2.md](docs/plan_e2.md)
 - **Contratos de integración:** [contratos/README.md](contratos/README.md)
 - **Arquitectura implementada:** [docs/arquitectura/arquitectura_e2.png](docs/arquitectura/arquitectura_e2.png) (editable en draw.io: [arquitectura_e2.drawio](docs/arquitectura/arquitectura_e2.drawio))
 - **Sustentación:** [docs/presentacion/](docs/presentacion/) (guion, láminas, guía de la demo y preguntas de la defensa)

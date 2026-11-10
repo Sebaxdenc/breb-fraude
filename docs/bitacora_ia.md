@@ -17,7 +17,7 @@
 | 4 | Búsqueda y comparación de modelos de Kaggle | Parcial | El agente revisó cuatro notebooks públicos con IBM AML y documentó sus fallas (fugas de información, SMOTE antes de dividir). Elegir el modelo de Kaggle fue una exigencia del profesor (corrección 2) y el equipo aprobó el candidato. |
 | 5 | Ajustes al notebook de entrenamiento (seis cambios documentados en el ADR 07) | Completa | El agente escribió el notebook con los ajustes y la exportación del contrato de variables. |
 | 6 | Entrenamiento del modelo en Kaggle | Nada | El equipo ejecutó el notebook en su cuenta de Kaggle (versión 1 de `aml-xgboost-bre-b-fraud`) y descargó los artefactos. El agente no tiene acceso a esa cuenta. |
-| 7 | Estructura del repositorio, contratos en JSON Schema y validación | Completa | Código y pruebas del agente. Congelar los contratos con aprobación del equipo sigue pendiente (PLAN.md, fase 0). |
+| 7 | Estructura del repositorio, contratos en JSON Schema y validación | Completa | Código y pruebas del agente. Congelar los contratos con aprobación del equipo sigue pendiente (`docs/plan_e2.md`, fase 0). |
 | 8 | Motor de las 58 variables y prueba de paridad con datos sintéticos | Completa | El agente escribió el motor y la referencia sintética; la prueba exige igualdad bit a bit con el notebook. |
 | 9 | Verificación de paridad con LI-Small real en Kaggle | Parcial | El agente escribió el notebook de verificación; el equipo lo corrió en Kaggle y reportó 54 de 58 variables. Con esa salida, el agente encontró la causa (la aritmética de numexpr en pandas) y la corrigió; el equipo volvió a correrlo y obtuvo **PARIDAD OK** (#3). |
 | 10 | Decisiones de diseño durante la implementación (D1 SeaweedFS, D3 productor directo, D5 perfiles, postergar D6 latencia) | Parcial | El agente presentó las opciones con sus costos; el equipo decidió. Ejemplos: "SeaweedFS sí", el productor publica directo en Kafka, y "si no da la latencia, la dejamos registrada y priorizamos la demo de punta a punta". |
@@ -34,9 +34,9 @@
 | 21 | Capa de consumo: registro en Trino, permisos, linaje y tablero de Metabase | Completa | Código del agente; el equipo lo corrió en Docker y envió capturas del tablero, con las que se corrigieron dos preguntas (#19). |
 | 22 | Airflow 3 con los tres DAG | Completa | Código del agente, verificado sin Docker (los DAG cargan en Airflow 3.3.2 y las etapas batch corren con Spark local). La corrida en Docker la hace el equipo. |
 | 23 | Pruebas automáticas (14) | Completa | Paridad, MongoDB con reintento tras falla parcial y contratos. El equipo las puede correr con `pytest`. |
-| 24 | README, PLAN.md y documentación de los contratos | Completa | El agente los mantuvo al día en cada pull request. |
+| 24 | README, plan de implementación (`docs/plan_e2.md`) y documentación de los contratos | Completa | El agente los mantuvo al día en cada pull request. |
 | 25 | Commits y pull requests | Parcial | El agente escribió los commits y abrió los pull requests a nombre de un integrante; el equipo los revisó y los fusionó (#1 a #19). |
-| 26 | Material de la sustentación: guion, láminas, guía de la demo y preguntas de la defensa | Completa | Borrador del agente a partir del Entregable 1, PLAN.md y el código. El equipo lo adapta, ensaya y decide el reparto. |
+| 26 | Material de la sustentación: guion, láminas, guía de la demo y preguntas de la defensa | Completa | Borrador del agente a partir del Entregable 1, el plan (`docs/plan_e2.md`) y el código. El equipo lo adapta, ensaya y decide el reparto. |
 | 27 | Esta bitácora | Completa | Borrador del agente a partir del historial de las sesiones. El equipo la revisa y completa lo que hizo fuera de ellas. |
 | 28 | Ensayo, presentación, demo en vivo y defensa | Nada | Las hace el equipo. Cada integrante debe poder explicar cualquier parte del sistema, incluido el código que escribió el agente. |
 
