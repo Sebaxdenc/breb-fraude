@@ -56,7 +56,8 @@ def main() -> int:
     ocupadas = [n for n in COLECCIONES if db[n].estimated_document_count()]
     if ocupadas and not a.reemplazar:
         print(f"MongoDB ya tiene estado en {', '.join(ocupadas)}. Para cargarlo de nuevo: --reemplazar "
-              "(y vaciar el tópico y los checkpoints con docker compose down -v si se va a reproducir desde cero)")
+              "(y vaciar el tópico y los checkpoints con docker compose --profile \"*\" down -v si se va a reproducir "
+              "desde cero)")
         return 1
     for n in ocupadas:
         db[n].drop()
