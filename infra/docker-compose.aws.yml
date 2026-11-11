@@ -64,7 +64,8 @@ services:
   spark-cliente:
     env_file: !override [aws/aws.env, credenciales/mongo-app.env, credenciales/metabase-admin.env]
     environment: *aws-env
-    volumes: [*spark-conf]
+    # herramientas/aws (Athena) montada: no hace falta reconstruir la imagen al actualizar la rama
+    volumes: [*spark-conf, "../herramientas/aws:/opt/breb/herramientas/aws:ro"]
     depends_on: !override
       kafka-1: {condition: service_healthy}
       mongo-1: {condition: service_healthy}

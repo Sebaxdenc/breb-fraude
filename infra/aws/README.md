@@ -7,6 +7,7 @@ Rama `aws/mvp-ec2`. El mismo pipeline del Entregable 2, con el almacenamiento y 
 | Lakehouse Bronze, Silver y Gold | SeaweedFS | **Amazon S3** (`breb-<cuenta>-lakehouse-*`) |
 | Log de commits de Delta (RNF-05) | DynamoDB Local | **Amazon DynamoDB** (tabla `delta_log`) |
 | Alertas (RF15) | moto | **Amazon SNS** (`fraud-alerts-critical`) y **Amazon SQS** (una cola por entidad y la de analistas) |
+| Consultas sobre el lakehouse | Trino + Hive Metastore | **Amazon Athena** + **AWS Glue Data Catalog** (paso 11), además de Trino |
 | Credenciales | `credenciales/s3.env` | **Rol de IAM** de la instancia (`LabInstanceProfile` en AWS Academy), sin llaves en archivos |
 | Kafka, MongoDB, Spark, Airflow, Hive Metastore, Trino y Metabase | Docker en el portátil | Los mismos contenedores, en **Amazon EC2** |
 
@@ -152,10 +153,28 @@ Airflow en http://localhost:8085, Spark en http://localhost:8080, Trino en http:
 - **SNS** → *Topics* → `fraud-alerts-critical` → *Subscriptions*: una por cola, con la política de filtro por entidad.
 - **SQS** → *Queues*: `breb-entidad-*` y `breb-analistas-fraude`, con mensajes enviados y recibidos en *Monitoring*. No usen *Poll for messages* mientras los consumidores están abiertos: se llevaría los mensajes.
 - En la terminal, `docker compose ps`: no corre ningún emulador.
+- **Athena** (después del paso 11) → *Query editor*: las bases `bronze`, `silver` y `gold` en *AwsDataCatalog*, y una de las preguntas de negocio corriendo ahí mismo.
+- **Glue** → *Data Catalog* → *Tables*: las tablas con *Table type* `DELTA` y su ubicación en S3.
 
 ## 10. Apagar y borrar
 - Entre sesiones: **EC2** → la instancia → **Instance state** → **Stop**, o **End Lab**, que también la detiene. El disco se conserva y la IP pública cambia al volver a prenderla. Al prenderla, `docker compose up -d` y `docker compose --profile orquestacion up -d` levantan lo que falte.
 - Al terminar el curso: **Terminate** la instancia (borra el disco), vaciar y borrar los tres buckets, y borrar la tabla `delta_log`, el tópico y las colas.
+
+## 11. Athena y el Glue Data Catalog
+Después del paso 7, con Gold ya armado:
+```bash
+cd ~/breb-fraude && git pull
+docker compose --profile consumo run --rm spark-cliente python /opt/breb/herramientas/aws/athena.py --metabase
+```
+`herramientas/aws/athena.py`:
+1. Crea el bucket `breb-<cuenta>-athena-resultados` y lo deja como ubicación de resultados del workgroup `primary`. Con eso, el editor de la consola deja de pedirla.
+2. Registra en el Glue Data Catalog las mismas tablas que `breb.consumo registrar` registra en Trino, en las bases `bronze`, `silver` y `gold`. Athena lee el esquema del `_delta_log`, así que no hay que declarar columnas.
+3. Corre en Athena las 9 consultas del tablero de Metabase sin cambiarlas: Athena versión 3 usa el SQL de Trino. Imprime cuánto escaneó cada una.
+4. Con `--metabase`, agrega Athena como segunda base de datos de Metabase y arma el mismo tablero sobre ella, en la colección *Bre-B (Athena)*. El driver toma el rol de la instancia, sin llaves.
+
+Termina en `ATHENA OK`. Si Gold cambia (otra corrida de Airflow), Athena lo ve en la siguiente consulta; no hay que volver a registrar. Si una consulta falla, el script sigue con las demás y dice cuál falló.
+
+Trino se queda: los permisos por rol (`breb.consumo permisos`) necesitarían Lake Formation o roles de IAM, y el laboratorio no permite ninguno de los dos.
 
 ## Plan B: cómputo en el portátil, servicios de AWS reales
 Si el laboratorio no deja lanzar una instancia de 16 GiB, el mismo stack corre en el portátil contra S3, DynamoDB, SNS y SQS de la cuenta del laboratorio. En AWS quedan el almacenamiento y la mensajería; Kafka, Spark, Airflow, Trino y Metabase quedan en Docker local.
@@ -187,6 +206,6 @@ Si el laboratorio no deja lanzar una instancia de 16 GiB, el mismo stack corre e
 | Kafka | Amazon MSK | MSK vive dentro de la VPC y, con autenticación de IAM, Spark y el productor necesitan otra librería |
 | Spark | Amazon EMR | Los checkpoints y los archivos de decisiones pendientes del Job 2 están en un volumen que comparten el driver y los ejecutores; en EMR tienen que ir a S3. Además hay que empaquetar el código, el modelo y las librerías |
 | Airflow | Amazon MWAA | Las tareas corren `spark-submit` dentro del contenedor de Airflow, y `bootstrap_state` usa unos 5,5 GB ahí. En MWAA se reemplazan por operadores que lanzan trabajos en EMR |
-| Trino y las reglas por rol | Amazon Athena y Lake Formation | `registrar`, `permisos` y `linaje` le hablan a Trino; las reglas de `reglas.json` pasan a permisos de Lake Formation |
+| Trino y las reglas por rol | Amazon Athena y Lake Formation | Athena ya consulta las tres capas (paso 11). Faltan los permisos: las reglas de `reglas.json` pasan a Lake Formation, que el laboratorio no ofrece, y `permisos` y `linaje` le hablan a Trino |
 | MongoDB | MongoDB Atlas | Solo cambia la conexión; el plan gratuito (512 MB) puede quedar corto para el estado inicial |
 | Monitoreo y secretos | CloudWatch, KMS y Secrets Manager | Fuera del MVP |
