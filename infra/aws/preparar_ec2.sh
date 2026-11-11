@@ -18,7 +18,7 @@ md() { curl -sf -m 5 -H "X-aws-ec2-metadata-token: $TOKEN" "$IMDS/latest/$1"; }
 
 ROL=$(md meta-data/iam/security-credentials/) || {
   echo "[aws] la instancia no tiene rol de IAM. Consola de EC2 → la instancia → Actions → Security →" >&2
-  echo "      Modify IAM role → breb-ec2 (paso 1 de la guía)" >&2; exit 1; }
+  echo "      Modify IAM role → LabInstanceProfile (paso 2 de la guía)" >&2; exit 1; }
 DOC=$(md dynamic/instance-identity/document)
 CUENTA=$(printf '%s' "$DOC" | python3 -c 'import json, sys; print(json.load(sys.stdin)["accountId"])')
 REGION=$(printf '%s' "$DOC" | python3 -c 'import json, sys; print(json.load(sys.stdin)["region"])')

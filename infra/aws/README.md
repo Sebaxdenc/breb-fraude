@@ -7,55 +7,51 @@ Rama `aws/mvp-ec2`. El mismo pipeline del Entregable 2, con el almacenamiento y 
 | Lakehouse Bronze, Silver y Gold | SeaweedFS | **Amazon S3** (`breb-<cuenta>-lakehouse-*`) |
 | Log de commits de Delta (RNF-05) | DynamoDB Local | **Amazon DynamoDB** (tabla `delta_log`) |
 | Alertas (RF15) | moto | **Amazon SNS** (`fraud-alerts-critical`) y **Amazon SQS** (una cola por entidad y la de analistas) |
-| Credenciales | `credenciales/s3.env` | **Rol de IAM** de la instancia, sin llaves en archivos |
+| Credenciales | `credenciales/s3.env` | **Rol de IAM** de la instancia (`LabInstanceProfile` en AWS Academy), sin llaves en archivos |
 | Kafka, MongoDB, Spark, Airflow, Hive Metastore, Trino y Metabase | Docker en el portátil | Los mismos contenedores, en **Amazon EC2** |
 
 Lo que no cambia de lugar, y por qué, está al final: "Lo que sigue en EC2".
 
-Costo aproximado en us-east-1: la instancia `m6i.2xlarge` cuesta unos 0,38 USD por hora, y el disco de 100 GiB unos 0,27 USD por día. S3, DynamoDB, SNS y SQS cuestan centavos con este volumen. Detengan la instancia cuando no la usen.
+## Límites de AWS Academy (Learner Lab)
+- No se pueden crear roles de IAM. Ya existen el rol `LabRole` y el perfil de instancia `LabInstanceProfile`, con permisos sobre S3, DynamoDB, SNS y SQS.
+- EC2 permite tamaños hasta **large** (2 vCPU), un máximo de 9 instancias y discos de hasta **100 GB**. Solo funcionan us-east-1 y us-west-2; esta configuración usa **us-east-1**.
+- La sesión del laboratorio dura unas horas. Al terminar, el laboratorio detiene las instancias y el disco se conserva. Con **Start Lab** empieza otra sesión.
+- El costo sale del presupuesto del laboratorio: una `r5.large` cuesta unos 0,13 USD por hora. S3, DynamoDB, SNS y SQS cuestan centavos con este volumen.
 
-## 1. Rol de IAM para la instancia
-Consola → **IAM** → **Roles** → **Create role**.
-1. Trusted entity type: **AWS service**. Use case: **EC2**. Next.
-2. Permisos: `AmazonS3FullAccess`, `AmazonDynamoDBFullAccess`, `AmazonSNSFullAccess` y `AmazonSQSFullAccess`. Next.
-3. Role name: `breb-ec2`. **Create role**.
+Con 2 vCPU el stack corre igual que en el portátil, pero más lento. `docker-compose.aws.yml` limita a 2 CPU el worker de Spark y Airflow, porque Docker no acepta un tope mayor que los núcleos de la máquina. Si la `r5.large` no se deja lanzar, el plan B (al final) deja el cómputo en el portátil y usa igual S3, DynamoDB, SNS y SQS reales.
 
-Para un MVP bastan las políticas administradas; en producción se limitarían a los buckets, la tabla, el tópico y las colas del proyecto.
+## 1. Abrir el laboratorio
+En AWS Academy → el curso → **Modules** → **Launch AWS Academy Learner Lab** → **Start Lab**. Cuando el círculo quede en verde, **AWS** abre la consola. Revisen arriba a la derecha que la región sea **N. Virginia (us-east-1)**.
+
+En **AWS Details** → **Download PEM** se descarga `labsuser.pem`, la llave del par `vockey`, que sirve para entrar por SSH.
 
 ## 2. Lanzar la instancia
-Consola → arriba a la derecha, región **US East (N. Virginia) us-east-1** → **EC2** → **Launch instance**.
+Consola → **EC2** → **Launch instance**.
 
 | Campo | Valor |
 |---|---|
 | Name | `breb-mvp` |
 | AMI | **Ubuntu Server 24.04 LTS**, arquitectura **64-bit (x86)** |
-| Instance type | **m6i.2xlarge** (8 vCPU, 32 GiB). Ver "Si no deja lanzar la m6i.2xlarge" |
-| Key pair | **Create new key pair** → nombre `breb`, tipo RSA, formato `.pem`. El navegador lo descarga en `Descargas` como `breb.pem` |
+| Instance type | **r5.large** (2 vCPU, 16 GiB). Con 8 GiB (`t3.large`, `m5.large`) el stack no cabe |
+| Key pair | `vockey` |
 | Network settings | VPC por defecto, **Auto-assign public IP: Enable**. Security group nuevo con una sola regla: **SSH** desde **My IP** |
-| Configure storage | **100 GiB gp3** (32 no alcanzan: imágenes, datos y volúmenes). Ignoren el aviso de la capa gratuita |
-| Advanced details → IAM instance profile | `breb-ec2` |
+| Configure storage | **100 GiB gp3**, el máximo del laboratorio. Ignoren el aviso de la capa gratuita |
+| Advanced details → IAM instance profile | **LabInstanceProfile** |
 | Advanced details → Metadata version | **V2 only (token required)** |
 | Advanced details → Metadata response hop limit | **2** (con 1, los contenedores no reciben las credenciales del rol) |
 
-**Launch instance** y copien la **Public IPv4 address**.
+**Launch instance** y copien la **Public IPv4 address**. Si la consola rechaza el tipo de instancia, prueben `r6i.large`; si tampoco, vayan al plan B.
 
 Las interfaces web (Airflow, Spark, Trino y Metabase) quedan en `127.0.0.1` de la instancia y se ven con un túnel SSH (paso 8). No hay que abrir más puertos.
-
-### Si no deja lanzar la m6i.2xlarge
-Una cuenta nueva puede tener un límite de vCPU bajo y responder `You have requested more vCPU capacity than your current vCPU limit`. Usen **r6i.xlarge** (4 vCPU, 32 GiB) y, en la instancia, antes del paso 6:
-```bash
-echo 'export SPARK_WORKER_CORES=4 JOB2_NUCLEOS=1' >> ~/.bashrc && source ~/.bashrc
-```
-Docker no acepta un tope de CPU mayor que los núcleos de la máquina, y el worker de Spark pide 5.
 
 ## 3. Conectarse
 En PowerShell:
 ```powershell
-ssh -i $HOME\Downloads\breb.pem ubuntu@<IP pública>
+ssh -i $HOME\Downloads\labsuser.pem ubuntu@<IP pública>
 ```
 Si responde `UNPROTECTED PRIVATE KEY FILE`:
 ```powershell
-icacls $HOME\Downloads\breb.pem /inheritance:r /grant:r "$($env:USERNAME):(R)"
+icacls $HOME\Downloads\labsuser.pem /inheritance:r /grant:r "$($env:USERNAME):(R)"
 ```
 Para tener varias terminales en la instancia (jobs, entidades, comandos), abran varias ventanas de PowerShell con el mismo `ssh`.
 
@@ -74,7 +70,7 @@ mkdir -p ~/breb-fraude/datos
 ```
 Desde PowerShell en el portátil, en la carpeta del repositorio, suban el CSV de Kaggle:
 ```powershell
-scp -i $HOME\Downloads\breb.pem .\datos\LI-Small_Trans.csv ubuntu@<IP pública>:~/breb-fraude/datos/
+scp -i $HOME\Downloads\labsuser.pem .\datos\LI-Small_Trans.csv ubuntu@<IP pública>:~/breb-fraude/datos/
 ```
 
 ## 5. Preparar el modo AWS
@@ -82,18 +78,18 @@ scp -i $HOME\Downloads\breb.pem .\datos\LI-Small_Trans.csv ubuntu@<IP pública>:
 bash ~/breb-fraude/infra/aws/preparar_ec2.sh
 source ~/.bashrc
 ```
-Debe terminar en `[aws] listo` después de imprimir la cuenta, el rol `breb-ec2` y los nombres de los buckets. Si dice que un contenedor no llega al servicio de metadatos, el límite de saltos quedó en 1: **EC2** → la instancia → **Actions** → **Instance settings** → **Modify instance metadata options** → hop limit **2**, y repetir el script.
+Debe terminar en `[aws] listo` después de imprimir la cuenta, el rol `LabRole` y los nombres de los buckets. Si dice que un contenedor no llega al servicio de metadatos, el límite de saltos quedó en 1: **EC2** → la instancia → **Actions** → **Instance settings** → **Modify instance metadata options** → hop limit **2**, y repetir el script.
 
 Desde aquí, `docker compose` usa `infra/docker-compose.yml` más `infra/docker-compose.aws.yml` en cualquier carpeta.
 
-## 6. Imágenes (una vez, unos 20 minutos)
+## 6. Imágenes (una vez, de 30 a 40 minutos con 2 vCPU)
 ```bash
 docker compose --profile consumo --profile orquestacion --profile herramientas build
 docker compose --profile consumo --profile orquestacion --profile herramientas --profile streaming pull
 ```
 
 ## 7. Pipeline de punta a punta
-Son los pasos del README de la raíz, con `grep` en vez de `Select-String`.
+Son los pasos del README de la raíz, con `grep` en vez de `Select-String`. Con 2 vCPU cada paso tarda más que en el portátil.
 ```bash
 # Infraestructura: init-recursos crea los buckets en S3, la tabla delta_log en DynamoDB, el tópico en SNS y la cola de analistas en SQS
 docker compose up -d
@@ -106,7 +102,7 @@ docker compose run --rm spark-cliente python /opt/breb/herramientas/infra/verifi
 docker compose run --rm productor preparar
 docker compose run --rm spark-cliente python -m breb.estado tramo
 
-# Estado inicial (una sola vez el trigger)
+# Estado inicial (una sola vez el trigger; con 2 vCPU, de 15 a 25 minutos)
 docker compose exec airflow airflow dags trigger bootstrap_state
 docker compose exec airflow airflow dags list-runs bootstrap_state          # repetir hasta success
 
@@ -115,10 +111,11 @@ docker compose --profile streaming up -d
 docker compose run --rm entidad --tramo
 docker compose run --rm entidad --analistas
 
-# Publicar el tramo y verificar
-docker compose run --rm productor publicar --tramo --escalones "50:310"
+# Publicar parte del tramo y verificar. Con 2 vCPU los jobs procesan muchas menos transacciones por segundo que en
+# el portátil: 5.000 a 20 por segundo alcanzan para el video. Para el tramo completo: --escalones "50:310" sin --max
+docker compose run --rm productor publicar --tramo --max 5000 --escalones "20:260"
 docker compose logs -f job2-riesgo | grep batch                             # en otra terminal, para ver los micro-batches
-docker compose run --rm spark-cliente spark-submit /opt/breb/herramientas/streaming/verificar_fase4.py --esperar 900
+docker compose run --rm spark-cliente spark-submit /opt/breb/herramientas/streaming/verificar_fase4.py --esperar 1800
 
 # Gold con Airflow
 docker compose stop job1-bronze job2-riesgo job2-ventanas job3-silver
@@ -133,7 +130,7 @@ docker compose --profile consumo run --rm spark-cliente python -m breb.consumo p
 docker compose --profile consumo run --rm spark-cliente python -m breb.consumo tablero
 docker compose --profile consumo run --rm spark-cliente python -m breb.consumo linaje
 ```
-Los resultados esperados son los mismos del README de la raíz: el RF1 puede salir `NO cumple` con los jobs prendidos, y la latencia del RNF-02 sigue siendo la única falla de la verificación.
+Los resultados esperados son los del README de la raíz, con 5.000 transacciones en vez de 15.000: el RF1 puede salir `NO cumple` con los jobs prendidos, y la latencia del RNF-02 sigue siendo la única falla de la verificación, más alta que en el portátil.
 
 Para empezar de cero en la instancia: `docker compose --profile "*" down -v`. Eso borra los volúmenes de la instancia, **no** lo que quedó en S3, DynamoDB, SNS y SQS. Para vaciar también el lakehouse:
 ```bash
@@ -144,12 +141,12 @@ La tabla `delta_log` se puede dejar: cada tabla Delta usa su propia ruta como cl
 ## 8. Ver las interfaces
 En una ventana de PowerShell que se deja abierta. Si el stack local del portátil está prendido, primero apáguenlo, porque usa los mismos puertos:
 ```powershell
-ssh -i $HOME\Downloads\breb.pem -N -L 8085:localhost:8085 -L 8080:localhost:8080 -L 8090:localhost:8090 -L 3000:localhost:3000 ubuntu@<IP pública>
+ssh -i $HOME\Downloads\labsuser.pem -N -L 8085:localhost:8085 -L 8080:localhost:8080 -L 8090:localhost:8090 -L 3000:localhost:3000 ubuntu@<IP pública>
 ```
 Airflow en http://localhost:8085, Spark en http://localhost:8080, Trino en http://localhost:8090/ui/ y Metabase en http://localhost:3000. Las credenciales son las mismas del README.
 
 ## 9. Evidencia para el video, en la consola de AWS
-- **EC2**: la instancia `breb-mvp` en *Running*, con el rol `breb-ec2` en la pestaña *Security*.
+- **EC2**: la instancia `breb-mvp` en *Running*, con el rol `LabRole` en la pestaña *Security*.
 - **S3**: los buckets `breb-<cuenta>-lakehouse-bronze`, `-silver` y `-gold`. Dentro de `transacciones/`, los Parquet y la carpeta `_delta_log/` con un JSON por commit.
 - **DynamoDB** → *Tables* → `delta_log` → *Explore table items*: una entrada por commit de Delta.
 - **SNS** → *Topics* → `fraud-alerts-critical` → *Subscriptions*: una por cola, con la política de filtro por entidad.
@@ -157,9 +154,32 @@ Airflow en http://localhost:8085, Spark en http://localhost:8080, Trino en http:
 - En la terminal, `docker compose ps`: no corre ningún emulador.
 
 ## 10. Apagar y borrar
-- Entre sesiones: **EC2** → la instancia → **Instance state** → **Stop**. El disco se conserva y la IP pública cambia al volver a prenderla.
-- Al terminar el curso: **Terminate** la instancia (borra el disco), vaciar y borrar los tres buckets, borrar la tabla `delta_log`, el tópico, las colas, el rol `breb-ec2` y el par de llaves.
-- Recomendado: **Billing** → **Budgets** → un presupuesto de 10 USD con alerta por correo.
+- Entre sesiones: **EC2** → la instancia → **Instance state** → **Stop**, o **End Lab**, que también la detiene. El disco se conserva y la IP pública cambia al volver a prenderla. Al prenderla, `docker compose up -d` y `docker compose --profile orquestacion up -d` levantan lo que falte.
+- Al terminar el curso: **Terminate** la instancia (borra el disco), vaciar y borrar los tres buckets, y borrar la tabla `delta_log`, el tópico y las colas.
+
+## Plan B: cómputo en el portátil, servicios de AWS reales
+Si el laboratorio no deja lanzar una instancia de 16 GiB, el mismo stack corre en el portátil contra S3, DynamoDB, SNS y SQS de la cuenta del laboratorio. En AWS quedan el almacenamiento y la mensajería; Kafka, Spark, Airflow, Trino y Metabase quedan en Docker local.
+
+1. **AWS Details** → **AWS CLI: Show**. Con esos tres valores, creen `infra\aws\aws.env` (el repositorio lo ignora y no se sube):
+   ```
+   AWS_REGION=us-east-1
+   AWS_DEFAULT_REGION=us-east-1
+   BREB_BUCKET_PREFIJO=breb-<número de la cuenta>-
+   AWS_ACCESS_KEY_ID=<aws_access_key_id>
+   AWS_SECRET_ACCESS_KEY=<aws_secret_access_key>
+   AWS_SESSION_TOKEN=<aws_session_token>
+   ```
+   El número de la cuenta sale en **AWS Details** y en el menú de arriba a la derecha de la consola.
+2. En PowerShell, en la raíz del repositorio:
+   ```powershell
+   git fetch; git checkout aws/mvp-ec2
+   $env:COMPOSE_FILE = "infra\docker-compose.yml;infra\docker-compose.aws.yml"
+   $env:BREB_CPUS_MAX = "5"
+   docker compose --profile "*" down -v
+   ```
+   Desde ahí, los pasos 6 y 7 de esta guía, con `Select-String` en vez de `grep` y `--escalones "50:310"` sin `--max`, porque el portátil sí alcanza.
+3. Las credenciales del laboratorio vencen cuando termina la sesión. Empiecen con una sesión nueva. Si vencen a mitad de camino, actualicen `aws.env` y recreen los contenedores que estén corriendo con `docker compose up -d --force-recreate`.
+4. Para volver a la demo local: `docker compose --profile "*" down -v`, luego `Remove-Item Env:COMPOSE_FILE`, `Remove-Item Env:BREB_CPUS_MAX` y `git checkout main`. Esto también borra los datos locales; la preparación de la demo empieza en P2 de todos modos.
 
 ## Lo que sigue en EC2
 | Pieza | Servicio gestionado | Qué falta para moverla |

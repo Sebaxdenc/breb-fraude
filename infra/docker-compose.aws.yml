@@ -7,8 +7,12 @@
 # Qué cambia frente al stack local:
 # - SeaweedFS, DynamoDB Local y moto no arrancan (perfil "emuladores"): el lakehouse va a Amazon S3, el log de
 #   commits de Delta a Amazon DynamoDB y las alertas a Amazon SNS y Amazon SQS.
-# - Ningún contenedor recibe llaves de AWS: credenciales/s3.env se reemplaza por aws/aws.env (región y prefijo
-#   de los buckets) y los SDK toman el rol de la EC2 del servicio de metadatos (límite de saltos 2).
+# - credenciales/s3.env se reemplaza por aws/aws.env (región y prefijo de los buckets). En la EC2 no lleva llaves:
+#   los SDK toman el rol de la instancia del servicio de metadatos (límite de saltos 2). En el plan B (cómputo en el
+#   portátil), aws.env lleva además las credenciales temporales de AWS Academy.
+# - En AWS Academy las instancias llegan hasta tamaño large (2 vCPU), y Docker no acepta un tope de CPU mayor que
+#   los núcleos de la máquina: el worker de Spark y Airflow quedan en BREB_CPUS_MAX (2 por defecto). Spark sigue
+#   ofreciendo los 5 núcleos lógicos del worker, para que los cuatro jobs reciban ejecutores.
 # - Spark, el Hive Metastore y Trino usan las configuraciones de infra/aws/.
 # Kafka, MongoDB, Spark, Airflow, Trino y Metabase siguen siendo los mismos contenedores, ahora en la EC2.
 
@@ -49,11 +53,13 @@ services:
     env_file: !override [aws/aws.env]
     environment: *aws-env
     volumes: [*spark-conf]
+    deploy: {resources: {limits: {cpus: "${BREB_CPUS_MAX:-2}"}}}
 
   spark-worker-2:
     env_file: !override [aws/aws.env]
     environment: *aws-env
     volumes: [*spark-conf]
+    deploy: {resources: {limits: {cpus: "${BREB_CPUS_MAX:-2}"}}}
 
   spark-cliente:
     env_file: !override [aws/aws.env, credenciales/mongo-app.env, credenciales/metabase-admin.env]
@@ -88,6 +94,7 @@ services:
     env_file: !override [aws/aws.env, credenciales/mongo-app.env, credenciales/airflow.env]
     environment: *aws-env
     volumes: [*spark-conf]
+    deploy: {resources: {limits: {cpus: "${BREB_CPUS_MAX:-2}"}}}
     depends_on: !override
       postgres-bases: {condition: service_completed_successfully}
       mongo-1: {condition: service_healthy}
