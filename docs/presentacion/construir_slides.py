@@ -325,14 +325,14 @@ LAMINAS = [
             ["2", "Escribir en MongoDB solo los campos que cambian; a escala, estado en el state store de Spark "
                   "particionado por cuenta", "MongoDB suma hasta 12,4 s por micro-batch; acercar el estado al cómputo "
                                              "quita viajes de red"],
-            ["3", "Medir en Linux nativo o en la nube con más núcleos y declarar la tasa con 30 % de margen",
-             "El portátil está saturado: hasta el productor ve 5,5 s hacia Kafka"],
+            ["3", "Medir en Linux nativo o en una nube con más núcleos y declarar la tasa con 30 % de margen",
+             "El portátil está saturado (el productor ve 5,5 s hacia Kafka) y AWS Academy da 2 vCPU por instancia"],
             ["4", "Correr las pruebas de falla: bróker, ejecutor de Spark y elección del primario de MongoDB",
              "RNF-03, RNF-04 y RNF-05 están diseñados, pero no medidos"],
             ["5", "Gold incremental con el Change Data Feed de Silver",
              "Hoy el Job 4 compara contra todos los hechos, y eso crece con el histórico"],
-            ["6", "TLS, secretos en un vault y CI con las pruebas de paridad",
-             "RNF-08 solo está cubierto por los roles de Trino y credenciales locales"],
+            ["6", "Secrets Manager, KMS con llave propia, autenticación en Trino y CI con las pruebas de paridad",
+             "En AWS ya hay rol de IAM, HTTPS y cifrado por defecto; faltan los secretos y la identidad en Trino"],
         ], tam=16, max_h=5.4),
     ]},
     {"expone": "todo el equipo", "pie": True, "el": titulo("Demo en vivo: qué vamos a mostrar (8 minutos)") + [
