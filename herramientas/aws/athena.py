@@ -1,4 +1,4 @@
-"""El lakehouse en Amazon Athena (modo AWS, rama aws/mvp-ec2; guía en infra/aws/README.md, paso 11).
+"""El lakehouse en Amazon Athena (modo AWS; guía en infra/aws/README.md, paso 11).
 
 1. Crea el bucket de resultados de Athena (<prefijo>athena-resultados) y lo deja como ubicación de resultados
    del workgroup primary, para que también funcione el editor de consultas de la consola.

@@ -86,7 +86,7 @@ def celda(c):
 
 
 # ------------------------------------------------------------------ láminas
-ARQ = DOCS / "arquitectura" / "arquitectura_e2.png"
+ARQ = DOCS / "arquitectura" / "arquitectura_aws.png"
 DAGS = DOCS / "arquitectura" / "dags_airflow.png"
 LAT = AQUI / "img" / "latencia.png"
 

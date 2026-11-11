@@ -1,4 +1,4 @@
-# Modo AWS: MVP del stack en una EC2 (rama aws/mvp-ec2). Guía completa en infra/aws/README.md.
+# Modo AWS: MVP del stack en una EC2. Guía completa en infra/aws/README.md.
 #
 # Se combina con infra/docker-compose.yml. infra/aws/preparar_ec2.sh deja en ~/.bashrc:
 #   export COMPOSE_FILE=<repo>/infra/docker-compose.yml:<repo>/infra/docker-compose.aws.yml

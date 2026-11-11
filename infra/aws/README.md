@@ -1,8 +1,8 @@
 # Bre-B en AWS · MVP en una EC2
 
-Rama `aws/mvp-ec2`. El mismo pipeline del Entregable 2, con el almacenamiento y la mensajería en servicios gestionados de AWS y el resto del stack en una sola EC2.
+El mismo pipeline del Entregable 2, con el almacenamiento y la mensajería en servicios gestionados de AWS y el resto del stack en una sola EC2.
 
-| Pieza | Local (`main`) | En esta rama |
+| Pieza | Modo local | Modo AWS |
 |---|---|---|
 | Lakehouse Bronze, Silver y Gold | SeaweedFS | **Amazon S3** (`breb-<cuenta>-lakehouse-*`) |
 | Log de commits de Delta (RNF-05) | DynamoDB Local | **Amazon DynamoDB** (tabla `delta_log`) |
@@ -66,7 +66,7 @@ exit
 Vuelvan a conectarse (paso 3) para que el grupo `docker` aplique, y luego:
 ```bash
 docker compose version                      # v2.24 o posterior
-git clone -b aws/mvp-ec2 https://github.com/Sebaxdenc/breb-fraude.git
+git clone https://github.com/Sebaxdenc/breb-fraude.git
 mkdir -p ~/breb-fraude/datos
 ```
 Desde PowerShell en el portátil, en la carpeta del repositorio, suban el CSV de Kaggle:
@@ -191,14 +191,14 @@ Si el laboratorio no deja lanzar una instancia de 16 GiB, el mismo stack corre e
    El número de la cuenta sale en **AWS Details** y en el menú de arriba a la derecha de la consola.
 2. En PowerShell, en la raíz del repositorio:
    ```powershell
-   git fetch; git checkout aws/mvp-ec2
+   git pull
    $env:COMPOSE_FILE = "infra\docker-compose.yml;infra\docker-compose.aws.yml"
    $env:BREB_CPUS_MAX = "5"
    docker compose --profile "*" down -v
    ```
    Desde ahí, los pasos 6 y 7 de esta guía, con `Select-String` en vez de `grep` y `--escalones "50:310"` sin `--max`, porque el portátil sí alcanza.
 3. Las credenciales del laboratorio vencen cuando termina la sesión. Empiecen con una sesión nueva. Si vencen a mitad de camino, actualicen `aws.env` y recreen los contenedores que estén corriendo con `docker compose up -d --force-recreate`.
-4. Para volver a la demo local: `docker compose --profile "*" down -v`, luego `Remove-Item Env:COMPOSE_FILE`, `Remove-Item Env:BREB_CPUS_MAX` y `git checkout main`. Esto también borra los datos locales; la preparación de la demo empieza en P2 de todos modos.
+4. Para volver a la demo local: `docker compose --profile "*" down -v`, luego `Remove-Item Env:COMPOSE_FILE` y `Remove-Item Env:BREB_CPUS_MAX`. Esto también borra los datos locales; la preparación de la demo empieza en P2 de todos modos.
 
 ## Lo que sigue en EC2
 | Pieza | Servicio gestionado | Qué falta para moverla |
