@@ -10,15 +10,16 @@ from __future__ import annotations
 
 import os
 
+from breb.buckets import bucket, ruta
 from breb.consumo.trino import ErrorTrino, consulta, tabla_texto
 
-GOLD = os.environ.get("BREB_GOLD", "s3a://lakehouse-gold/analytics")
+GOLD = os.environ.get("BREB_GOLD", ruta("gold", "analytics"))
 TABLAS = [
-    ("bronze", "transacciones", os.environ.get("BREB_BRONZE", "s3a://lakehouse-bronze/transacciones")),
-    ("silver", "transacciones", os.environ.get("BREB_SILVER", "s3a://lakehouse-silver/transacciones")),
-    ("silver", "reprocesos_cuarentena", os.environ.get("BREB_REPROCESOS", "s3a://lakehouse-silver/reprocesos_cuarentena")),
-    ("gold", "risk_decisions", os.environ.get("BREB_RISK_DECISIONS", "s3a://lakehouse-gold/risk_decisions")),
-    ("gold", "progreso_streaming", os.environ.get("BREB_METRICAS", "s3a://lakehouse-gold/metricas/progreso_streaming")),
+    ("bronze", "transacciones", os.environ.get("BREB_BRONZE", ruta("bronze", "transacciones"))),
+    ("silver", "transacciones", os.environ.get("BREB_SILVER", ruta("silver", "transacciones"))),
+    ("silver", "reprocesos_cuarentena", os.environ.get("BREB_REPROCESOS", ruta("silver", "reprocesos_cuarentena"))),
+    ("gold", "risk_decisions", os.environ.get("BREB_RISK_DECISIONS", ruta("gold", "risk_decisions"))),
+    ("gold", "progreso_streaming", os.environ.get("BREB_METRICAS", ruta("gold", "metricas/progreso_streaming"))),
 ] + [("gold", t, f"{GOLD}/{t}") for t in ("fact_transferencias", "dim_cuenta", "dim_entidad_financiera", "dim_canal",
                                          "dim_tiempo", "etiquetas", "ejecuciones")]
 
@@ -32,7 +33,7 @@ def registrar(registro=print) -> dict:
     estado = {"registradas": [], "ya_estaban": [], "re_registradas": [], "pendientes": []}
     for esquema in ("bronze", "silver", "gold"):
         consulta(f"CREATE SCHEMA IF NOT EXISTS lakehouse.{esquema} "
-                 f"WITH (location = 's3a://lakehouse-{esquema}/_esquema_trino')")
+                 f"WITH (location = 's3a://{bucket(esquema)}/_esquema_trino')")
     for esquema, tabla, ubicacion in TABLAS:
         nombre = f"{esquema}.{tabla}"
         existentes = {f[0] for f in consulta(f"SHOW TABLES FROM lakehouse.{esquema}")[1]}

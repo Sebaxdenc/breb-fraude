@@ -12,6 +12,8 @@ import uuid
 import boto3
 from pymongo import MongoClient
 
+from breb.buckets import CAPAS, bucket
+
 fallas = []
 
 
@@ -26,16 +28,17 @@ def paso(nombre):
     return deco
 
 
-@paso("S3 (SeaweedFS)")
+@paso("S3")
 def s3():
     s3 = boto3.client("s3", endpoint_url=os.environ["S3_ENDPOINT"])
     buckets = {b["Name"] for b in s3.list_buckets()["Buckets"]}
-    faltan = {"lakehouse-bronze", "lakehouse-silver", "lakehouse-gold"} - buckets
+    esperados = [bucket(c) for c in CAPAS]
+    faltan = set(esperados) - buckets
     assert not faltan, f"faltan los buckets {sorted(faltan)}"
-    return "buckets lakehouse-bronze, lakehouse-silver y lakehouse-gold"
+    return f"buckets {', '.join(esperados)} en {os.environ['S3_ENDPOINT']}"
 
 
-@paso("DynamoDB Local")
+@paso("DynamoDB")
 def dynamodb():
     ddb = boto3.client("dynamodb", endpoint_url=os.environ["DYNAMODB_ENDPOINT"])
     t = ddb.describe_table(TableName="delta_log")["Table"]

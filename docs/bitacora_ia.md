@@ -58,6 +58,14 @@
 | 38 | Commits y pull requests #22, #23, #24 y el de esta actualización | Parcial | El agente automatizó la redacción de los commits de soporte técnico, los cuales fueron validados y fusionados por el equipo. |
 | 39 | Respuestas sugeridas para la defensa y actualización de la bitácora | Completa | El agente sirvió como sparring académico redactando preguntas de práctica basadas en la rúbrica, que el equipo estudió y discutió conjuntamente. |
 
+## Sesiones con Claude (10 y 11 de noviembre de 2026)
+
+| # | Acción | Delegación | Justificación |
+|---|---|---|---|
+| 40 | Diagnóstico de la corrida de punta a punta: checkpoints de una corrida anterior después de `down -v` sin perfiles, y tramo incompleto con `--escalones "50:300"` (PR #26 y #27) | Parcial | El equipo corrió el pipeline desde cero y aportó las salidas; el agente encontró las causas en el código y en la documentación de Compose y corrigió el README y la guía de la demo. |
+| 41 | Preguntas para la asesoría y preparación de lo que se mostró | Parcial | El agente propuso las preguntas a partir de la guía y del estado del proyecto; el equipo eligió cuáles hacer y preparó el stack. |
+| 42 | MVP en AWS (rama `aws/mvp-ec2`): S3, DynamoDB, SNS y SQS reales y el resto del stack en una EC2 | Parcial | A pedido del profesor después de la asesoría. El agente escribió `infra/docker-compose.aws.yml`, las configuraciones de `infra/aws/`, el prefijo de los buckets, el script de preparación y la guía; la cuenta, el rol, la instancia y la corrida en AWS los hace el equipo. |
+
 ## Cómo se verificó el entendimiento en el equipo
 - **Dominio técnico:** Ningún fragmento de código generado por el agente se integró sin una revisión línea por línea por parte del equipo.
 - **Pruebas de paridad y ejecución local:** Toda la lógica crítica (como el motor de variables y los jobs de Spark) se probó con datos reales y sintéticos hasta garantizar resultados idénticos a los requeridos.

@@ -1,0 +1,93 @@
+# Modo AWS: MVP del stack en una EC2 (rama aws/mvp-ec2). Guía completa en infra/aws/README.md.
+#
+# Se combina con infra/docker-compose.yml. infra/aws/preparar_ec2.sh deja en ~/.bashrc:
+#   export COMPOSE_FILE=<repo>/infra/docker-compose.yml:<repo>/infra/docker-compose.aws.yml
+# y con eso los comandos de siempre (docker compose up -d, run, exec...) usan los dos archivos.
+#
+# Qué cambia frente al stack local:
+# - SeaweedFS, DynamoDB Local y moto no arrancan (perfil "emuladores"): el lakehouse va a Amazon S3, el log de
+#   commits de Delta a Amazon DynamoDB y las alertas a Amazon SNS y Amazon SQS.
+# - Ningún contenedor recibe llaves de AWS: credenciales/s3.env se reemplaza por aws/aws.env (región y prefijo
+#   de los buckets) y los SDK toman el rol de la EC2 del servicio de metadatos (límite de saltos 2).
+# - Spark, el Hive Metastore y Trino usan las configuraciones de infra/aws/.
+# Kafka, MongoDB, Spark, Airflow, Trino y Metabase siguen siendo los mismos contenedores, ahora en la EC2.
+
+x-aws-env: &aws-env
+  S3_ENDPOINT: https://s3.us-east-1.amazonaws.com
+  DYNAMODB_ENDPOINT: https://dynamodb.us-east-1.amazonaws.com
+  SNS_ENDPOINT: https://sns.us-east-1.amazonaws.com
+  SQS_ENDPOINT: https://sqs.us-east-1.amazonaws.com
+
+x-spark-conf: &spark-conf ./aws/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
+
+x-job-aws: &job-aws
+  env_file: !override [aws/aws.env, credenciales/mongo-app.env]
+  environment: *aws-env
+  volumes: [*spark-conf]
+
+services:
+  # Emuladores: fuera del modo AWS
+  seaweedfs:
+    profiles: [emuladores]
+  dynamodb-local:
+    profiles: [emuladores]
+  moto:
+    profiles: [emuladores]
+
+  # Buckets en S3, tabla delta_log en DynamoDB, tópico en SNS y cola de analistas en SQS
+  init-recursos:
+    env_file: !override [aws/aws.env]
+    environment: *aws-env
+    depends_on: !reset {}
+
+  spark-master:
+    env_file: !override [aws/aws.env]
+    environment: *aws-env
+    volumes: [*spark-conf]
+
+  spark-worker-1:
+    env_file: !override [aws/aws.env]
+    environment: *aws-env
+    volumes: [*spark-conf]
+
+  spark-worker-2:
+    env_file: !override [aws/aws.env]
+    environment: *aws-env
+    volumes: [*spark-conf]
+
+  spark-cliente:
+    env_file: !override [aws/aws.env, credenciales/mongo-app.env, credenciales/metabase-admin.env]
+    environment: *aws-env
+    volumes: [*spark-conf]
+    depends_on: !override
+      kafka-1: {condition: service_healthy}
+      mongo-1: {condition: service_healthy}
+
+  entidad:
+    env_file: !override [aws/aws.env, credenciales/mongo-app.env]
+    environment: *aws-env
+    depends_on: !override
+      mongo-1: {condition: service_healthy}
+
+  job1-bronze: *job-aws
+  job2-riesgo: *job-aws
+  job2-ventanas: *job-aws
+  job3-silver: *job-aws
+
+  hive-metastore:
+    env_file: !override [credenciales/hms-db.env, aws/aws.env]
+    volumes: ["./aws/hms-core-site.xml:/opt/hive/conf/core-site.xml:ro"]
+    depends_on: !override
+      postgres-bases: {condition: service_completed_successfully}
+
+  trino:
+    env_file: !override [aws/aws.env]
+    volumes: ["./aws/trino-lakehouse.properties:/etc/trino/catalog/lakehouse.properties:ro"]
+
+  airflow:
+    env_file: !override [aws/aws.env, credenciales/mongo-app.env, credenciales/airflow.env]
+    environment: *aws-env
+    volumes: [*spark-conf]
+    depends_on: !override
+      postgres-bases: {condition: service_completed_successfully}
+      mongo-1: {condition: service_healthy}

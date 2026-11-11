@@ -90,6 +90,9 @@ docker compose --profile consumo run --rm spark-cliente python -m breb.consumo l
 ```
 Resultados esperados: en el paso 6, `confirmados 14,999 de 14,999` (más el mensaje de calentamiento), `errores 0` y `no quedan transacciones por publicar`. Con los jobs prendidos, el RF1 sale `NO cumple` y el cierre `PUBLICACIÓN CON PROBLEMAS`: sube la latencia fuente → Kafka, pero no se pierde nada. En la verificación, todo en `[ok]` salvo la latencia del RNF-02 (`HAY FALLAS: 1`), que en el portátil no se cumple. Después, la corrida de `breb_lakehouse_pipeline` en `success`, `PERMISOS OK` y el enlace del tablero. En el portátil de 16 GB no conviene tener `streaming`, `consumo` y `orquestacion` arriba a la vez: por eso el paso 7 apaga los jobs. La guía de la demo en vivo ([docs/presentacion/demo_en_vivo.md](docs/presentacion/demo_en_vivo.md)) divide el paso 6 en una parte antes de la clase y otra en vivo.
 
+## Modo AWS (rama `aws/mvp-ec2`)
+MVP del mismo pipeline en AWS: el lakehouse en Amazon S3, el log de commits de Delta en Amazon DynamoDB y las alertas en Amazon SNS y Amazon SQS, con credenciales del rol de IAM de la instancia. Kafka, MongoDB, Spark, Airflow, Trino y Metabase son los mismos contenedores, en una EC2. `infra/docker-compose.aws.yml` se combina con `infra/docker-compose.yml`, y los nombres de los buckets llevan el prefijo `BREB_BUCKET_PREFIJO` porque en S3 son únicos en todo AWS. Guía paso a paso, costos y lo que falta para pasar a MSK, EMR y MWAA: [infra/aws/README.md](infra/aws/README.md).
+
 ## Levantar el stack
 Pensado para el equipo de la demo: Windows 11, 16 GB de RAM, Docker Desktop con WSL 2.
 

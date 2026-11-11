@@ -12,3 +12,6 @@ build/
 
 # vistas previas que genera docs/presentacion/construir_slides.py
 docs/presentacion/vista/
+
+# Modo AWS: lo genera infra/aws/preparar_ec2.sh en la EC2
+infra/aws/aws.env

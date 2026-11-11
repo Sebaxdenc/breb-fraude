@@ -1,8 +1,9 @@
-"""Crea los recursos del lakehouse local: los tres buckets en SeaweedFS y la tabla `delta_log` en
-DynamoDB Local (commits coordinados de Delta, RNF-05). Es idempotente: se puede correr varias veces.
+"""Crea los recursos del lakehouse: los tres buckets y la tabla `delta_log` (commits coordinados de Delta,
+RNF-05), y la cola de los analistas suscrita al tópico de alertas. En local van a SeaweedFS, DynamoDB Local y
+moto; en AWS (infra/docker-compose.aws.yml), a S3, DynamoDB, SNS y SQS. Es idempotente.
 
-Variables de entorno: S3_ENDPOINT, DYNAMODB_ENDPOINT, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
-AWS_REGION (por defecto us-east-1).
+Variables de entorno: S3_ENDPOINT, DYNAMODB_ENDPOINT, SNS_ENDPOINT, AWS_REGION (por defecto us-east-1) y
+BREB_BUCKET_PREFIJO. Credenciales: las de AWS_ACCESS_KEY_ID en local, el rol de la instancia en AWS.
 """
 import os
 import sys
@@ -11,7 +12,9 @@ import time
 import boto3
 from botocore.exceptions import ClientError, EndpointConnectionError
 
-BUCKETS = ["lakehouse-bronze", "lakehouse-silver", "lakehouse-gold"]
+from breb.buckets import CAPAS, bucket
+
+BUCKETS = [bucket(c) for c in CAPAS]
 TABLA_DELTA = "delta_log"
 REGION = os.environ.get("AWS_REGION", "us-east-1")
 
@@ -29,7 +32,7 @@ def esperar(nombre, prueba, intentos=60):
 
 def crear_buckets():
     s3 = boto3.client("s3", endpoint_url=os.environ["S3_ENDPOINT"], region_name=REGION)
-    existentes = {b["Name"] for b in esperar("SeaweedFS", s3.list_buckets)["Buckets"]}
+    existentes = {b["Name"] for b in esperar("S3", s3.list_buckets)["Buckets"]}
     for b in BUCKETS:
         if b in existentes:
             print(f"[init] bucket {b}: ya existe")
@@ -40,7 +43,7 @@ def crear_buckets():
 
 def crear_tabla_delta():
     ddb = boto3.client("dynamodb", endpoint_url=os.environ["DYNAMODB_ENDPOINT"], region_name=REGION)
-    tablas = esperar("DynamoDB Local", ddb.list_tables)["TableNames"]
+    tablas = esperar("DynamoDB", ddb.list_tables)["TableNames"]
     if TABLA_DELTA in tablas:
         print(f"[init] tabla {TABLA_DELTA}: ya existe")
         return
@@ -67,7 +70,7 @@ def crear_cola_analistas():
         return
     from breb.entidad.servicio import asegurar_analistas, clientes
     sns, sqs = clientes()
-    esperar("moto", lambda: sns.list_topics())
+    esperar("SNS", lambda: sns.list_topics())
     asegurar_analistas(sns, sqs)
     print("[init] tópico fraud-alerts-critical y cola breb-analistas-fraude listos")
 
