@@ -4,7 +4,7 @@ Proyecto final de ST1630 Sistemas Intensivos en Datos (EAFIT, 2026-2). Implement
 
 - **Plan y avance:** [docs/plan_e2.md](docs/plan_e2.md)
 - **Contratos de integración:** [contratos/README.md](contratos/README.md)
-- **Arquitectura desplegada en AWS:** [docs/arquitectura/arquitectura_aws.png](docs/arquitectura/arquitectura_aws.png) (editable en draw.io: [arquitectura_aws.drawio](docs/arquitectura/arquitectura_aws.drawio))
+- **Arquitectura desplegada en AWS:** [docs/arquitectura/arquitectura_aws.png](docs/arquitectura/arquitectura_aws.png) (editable en draw.io: [arquitectura_aws.drawio](docs/arquitectura/arquitectura_aws.drawio)). Explicación y recorrido del pipeline paso a paso: [docs/arquitectura/arquitectura_aws.md](docs/arquitectura/arquitectura_aws.md)
 - **Arquitectura en local (Docker Compose):** [docs/arquitectura/arquitectura_e2.png](docs/arquitectura/arquitectura_e2.png) (editable en draw.io: [arquitectura_e2.drawio](docs/arquitectura/arquitectura_e2.drawio)). La rama `entregable2-local` guarda el repositorio antes del modo AWS.
 - **Sustentación:** [docs/presentacion/](docs/presentacion/) (guion, láminas, guía de la demo y preguntas de la defensa)
 - **Bitácora de delegación a agentes de IA:** [docs/bitacora_ia.md](docs/bitacora_ia.md)
