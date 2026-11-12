@@ -79,7 +79,7 @@ Reglas para hablar:
 ### Diapositiva 14 · Demo en AWS — todo el equipo
 > En la demo van a ver el pipeline corriendo en AWS: el productor publica, Spark decide y alerta por SNS y SQS, Airflow lleva los datos a Gold, consultamos Gold en Athena y en Metabase, y al final seguimos el linaje de una alerta. El estado inicial de las cuentas ya está cargado en MongoDB.
 
-Si la demo va en video, se graba siguiendo esta misma tabla, cortando las esperas, y cada integrante narra su parte en vivo mientras corre el video.
+Si la demo va en video, se graba siguiendo esta misma tabla, cortando las esperas, y cada integrante narra su parte en vivo mientras corre el video. El paso a paso para prepararla y grabarla, con las pestañas, los scripts y las consultas de Athena, está en [demo_en_vivo.md](demo_en_vivo.md).
 
 ### Preparación (40 minutos antes)
 1. **Laboratorio y EC2:**
