@@ -25,6 +25,8 @@ import boto3
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 
+from breb.buckets import bucket
+
 USUARIO = "breb_admin"   # infra/trino/etc/reglas.json: el único que registra tablas
 
 
@@ -60,8 +62,8 @@ def principal(args) -> None:
     marca = uuid.uuid4().hex[:8]
     esquema = f"pruebas_{marca}"
     tablas = {"bronze": 30, "silver": 20, "gold": 10}
-    rutas = {capa: f"s3a://lakehouse-{capa}/_pruebas/consulta_{marca}" for capa in tablas}
-    ruta_esquema = f"s3a://lakehouse-gold/_pruebas/esquema_{marca}"
+    rutas = {capa: f"s3a://{bucket(capa)}/_pruebas/consulta_{marca}" for capa in tablas}
+    ruta_esquema = f"s3a://{bucket('gold')}/_pruebas/esquema_{marca}"
     s3 = boto3.client("s3", endpoint_url=os.environ["S3_ENDPOINT"])
     t0 = time.perf_counter()
 

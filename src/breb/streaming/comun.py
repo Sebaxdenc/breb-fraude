@@ -19,12 +19,14 @@ from pyspark.sql import types as T
 from pyspark.sql.functions import pandas_udf
 from pyspark.sql.streaming import StreamingQueryListener
 
+from breb.buckets import ruta
+
 TOPICO = os.environ.get("BREB_TOPICO", "breb.transacciones.raw")
 KAFKA = os.environ.get("KAFKA_BOOTSTRAP", "kafka-1:9092")
-BRONZE = os.environ.get("BREB_BRONZE", "s3a://lakehouse-bronze/transacciones")
-SILVER = os.environ.get("BREB_SILVER", "s3a://lakehouse-silver/transacciones")
-RISK_DECISIONS = os.environ.get("BREB_RISK_DECISIONS", "s3a://lakehouse-gold/risk_decisions")
-METRICAS = os.environ.get("BREB_METRICAS", "s3a://lakehouse-gold/metricas/progreso_streaming")
+BRONZE = os.environ.get("BREB_BRONZE", ruta("bronze", "transacciones"))
+SILVER = os.environ.get("BREB_SILVER", ruta("silver", "transacciones"))
+RISK_DECISIONS = os.environ.get("BREB_RISK_DECISIONS", ruta("gold", "risk_decisions"))
+METRICAS = os.environ.get("BREB_METRICAS", ruta("gold", "metricas/progreso_streaming"))
 CHECKPOINTS = os.environ.get("BREB_CHECKPOINTS", "file:///checkpoints")
 
 ESQUEMA_EVENTO = T.StructType([
@@ -57,7 +59,7 @@ def comprobar_servicios(**destinos: str | None) -> None:
         d = destino.split(",")[0].strip()
         u = urlparse(d if "://" in d else f"tcp://{d}")
         try:
-            socket.create_connection((u.hostname, u.port or 80), timeout=5).close()
+            socket.create_connection((u.hostname, u.port or (443 if u.scheme == "https" else 80)), timeout=5).close()
         except OSError as e:
             caidos.append(f"{nombre} ({u.hostname}:{u.port}): {e}")
     if caidos:

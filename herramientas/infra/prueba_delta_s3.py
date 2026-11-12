@@ -23,7 +23,9 @@ from delta.tables import DeltaTable
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 
-BUCKET = "lakehouse-bronze"
+from breb.buckets import bucket
+
+BUCKET = bucket("bronze")
 PREFIJO = "_pruebas"
 
 

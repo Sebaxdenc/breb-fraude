@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<!-- Modo AWS (infra/docker-compose.aws.yml): reemplaza a infra/hms/conf/core-site.xml. El metastore revisa y
+     crea en Amazon S3 la carpeta de cada esquema y de cada tabla que se registra. Credenciales: primero las
+     variables de entorno (plan B, en el portátil) y si no hay, el rol de la EC2 (servicio de metadatos). -->
+<configuration>
+  <property>
+    <name>fs.s3a.endpoint</name>
+    <value>s3.us-east-1.amazonaws.com</value>
+  </property>
+  <property>
+    <name>fs.s3a.endpoint.region</name>
+    <value>us-east-1</value>
+  </property>
+  <property>
+    <name>fs.s3a.path.style.access</name>
+    <value>false</value>
+  </property>
+  <property>
+    <name>fs.s3a.connection.ssl.enabled</name>
+    <value>true</value>
+  </property>
+  <property>
+    <name>fs.s3a.aws.credentials.provider</name>
+    <value>software.amazon.awssdk.auth.credentials.EnvironmentVariableCredentialsProvider,org.apache.hadoop.fs.s3a.auth.IAMInstanceCredentialsProvider</value>
+  </property>
+  <!-- Trino puede entregar rutas s3:// en lugar de s3a://: las dos van a S3A. -->
+  <property>
+    <name>fs.s3.impl</name>
+    <value>org.apache.hadoop.fs.s3a.S3AFileSystem</value>
+  </property>
+</configuration>
