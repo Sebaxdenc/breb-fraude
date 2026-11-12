@@ -110,7 +110,7 @@ El resto de los efectos:
 **¿Qué corre en AWS y qué no?** Gestionado: S3 (lakehouse), DynamoDB (log de commits de Delta), SNS y SQS (alertas), Athena con el Glue Data Catalog (consultas) e IAM (`LabRole`). En una EC2 `r5.large`, con Docker Compose: Kafka, MongoDB, Spark, Airflow, Trino y Metabase.
 
 **¿Por qué Kafka, Spark y Airflow en una EC2 y no en MSK, EMR y MWAA?** Por tres razones:
-- **Costo:** el ADR 06 estimó el stack gestionado completo en más de 300 USD al mes.
+- **Costo:** el ADR 06 estimó el stack gestionado completo en más de 300 USD al mes. Con la carga real de Bre-B y alta disponibilidad serían unos 2.550 USD al mes, contra 0,14 USD por hora del MVP (ver "¿Cuánto cuesta el MVP?").
 - **El laboratorio:** AWS Academy no ofrece esos servicios ni instancias de más de 2 vCPU.
 - **Código:** moverlos exige cambios. Los checkpoints y los archivos de decisiones pendientes del Job 2 están en un volumen que comparten el driver y los ejecutores (en EMR tendrían que ir a S3), y las tareas de Airflow corren `spark-submit` dentro de su propio contenedor (en MWAA serían operadores de EMR).
 
@@ -134,12 +134,47 @@ Un error que encontramos: AWS Academy no deja crear roles (`iam:CreateRole` dene
 
 **¿Por qué una `r5.large`?** El laboratorio permite instancias hasta tamaño large (2 vCPU). De esas, la `r5.large` es la que tiene 16 GiB; con 8 GiB el stack no cabe. Le agregamos 8 GB de swap en el disco. Con 2 vCPU no corremos el streaming y el consumo al mismo tiempo: para armar Gold, se apaga el streaming.
 
-**¿Cuánto cuesta?**
-- **EC2:** la `r5.large` cuesta unos 0,13 USD por hora, y el disco de 100 GiB, unos 0,27 USD al día.
-- **S3, DynamoDB, SNS y SQS:** centavos con este volumen.
-- **Athena:** cobra unos 5 USD por TB escaneado, y cada consulta del tablero escaneó menos de 2 MB.
+**¿Cuánto cuesta el MVP?** Unos **0,14 USD por hora prendido**. Prendido todo el mes serían unos 105 USD; apagado, solo el disco, 8 USD al mes. Son precios de lista bajo demanda en us-east-1, y el laboratorio los descuenta de su crédito. El gasto real está en el panel del Learner Lab.
 
-Todo sale del presupuesto del laboratorio, y la instancia se detiene cuando no se usa.
+| Servicio | Qué usamos | Precio | Por hora prendido | Mes 24/7 |
+|---|---|---|---|---|
+| EC2 `r5.large` | 1 instancia Linux (2 vCPU, 16 GiB) | 0,126 USD/h | 0,126 | 91,98 |
+| EBS gp3 | Disco de 100 GiB | 0,08 USD/GB-mes | 0,011 (se cobra aunque esté apagada) | 8,00 |
+| IPv4 pública | 1 dirección | 0,005 USD/h | 0,005 | 3,65 |
+| S3 Standard | Bronze, Silver, Gold y resultados de Athena | 0,023 USD/GB-mes; 0,005 USD por 1.000 PUT o LIST; 0,0004 USD por 1.000 GET | Centavos | < 1 |
+| DynamoDB bajo demanda | `delta_log`: una escritura por commit de Delta | 0,625 USD por millón de escrituras | ≈ 0 | < 0,10 |
+| SNS | 8 alertas en la corrida | 0,50 USD por millón (el primer millón es gratis) | 0 | 0 |
+| SQS | Colas de las entidades | 0,40 USD por millón (el primer millón es gratis) | 0 | 0 |
+| Athena | Las 9 consultas del tablero (menos de 2 MB cada una) | 5 USD/TB, mínimo 10 MB por consulta | ≈ 0,0005 USD por corrida del tablero | ≈ 0 |
+| Glue Data Catalog | Las tablas de las tres capas | Gratis hasta 1 millón de objetos | 0 | 0 |
+| **Total** | | | **≈ 0,14 USD/h** | **≈ 105 USD/mes** |
+
+En la práctica: apagada cuesta 0,27 USD al día, y una sesión de 4 horas, como la de grabar el video, unos 0,57 USD.
+
+**¿Y cuánto costaría la arquitectura ideal, en producción?** Unos **2.550 USD al mes** (unos 30.500 al año), unas 24 veces el MVP prendido 24/7, o unos 18 USD por millón de transacciones. Es el diseño del E1 en servicios gestionados, en 3 zonas de disponibilidad. La carga es la del enunciado: 1.000 ev/s de pico y el volumen real de Bre-B, unos 1.700 millones de transacciones al año (unos 140 millones al mes; unos 140 GB al mes de eventos de 1 KB).
+
+| Capa | Servicio y configuración | Supuesto | USD/mes |
+|---|---|---|---|
+| Ingesta | **Amazon MSK**: 3 brókers `kafka.m5.large` (0,21 USD/h c/u), factor de replicación 3, `min.insync.replicas=2` | 7 días de retención × 3 réplicas ≈ 300 GB de disco a 0,10 USD/GB-mes | ≈ 490 |
+| Streaming (Jobs 1, 2, ventanas y 3) | **EMR en EC2** 24/7: 1 primario `m5.xlarge` (0,24 USD/h con la tarifa de EMR) y 3 nodos `r5.xlarge` (0,315 USD/h c/u) | Checkpoints en S3; discos gp3 de 64 GB por nodo | ≈ 885 |
+| Batch (Job 4, calidad y mantenimiento) | **EMR Serverless** (0,0526 USD por vCPU-h y 0,0058 USD por GB-h) | 96 corridas al día de unos 5 min con 4 vCPU y 16 GB, más OPTIMIZE y VACUUM diarios | ≈ 80 |
+| Estado | **MongoDB Atlas M30**: replica set de 3 nodos, 8 GB de RAM, 40 GB de disco | 0,54 USD/h; backups aparte | ≈ 388 |
+| Orquestación | **Amazon MWAA**, ambiente pequeño | 0,49 USD/h | ≈ 358 |
+| Lakehouse | **S3**: Bronze, Silver, Gold y `risk_decisions` | Unos 100 GB comprimidos nuevos al mes; unos 14.000 commits de Delta al día, más un archivo de decisiones por segundo | ≈ 70 |
+| Commits de Delta | **DynamoDB** bajo demanda | Menos de 1 millón de escrituras al mes | ≈ 1 |
+| Alertas | **SNS + SQS** | Unas 35.000 alertas al mes (0,025 %, cabe en la capa gratuita) y unas 100 colas con long polling | ≈ 5 |
+| Consumo | **Athena + Glue + Lake Formation** (Lake Formation no cobra aparte; sus permisos reemplazan las reglas de Trino) | Unos 2 TB escaneados al mes, con el tablero en caché y particiones por fecha | ≈ 10 |
+| Tablero | **Metabase en ECS Fargate** (1 tarea de 2 vCPU y 4 GB), RDS PostgreSQL `db.t4g.small` multi-AZ y un ALB | | ≈ 140 |
+| Red | 2 NAT Gateway (0,045 USD/h c/u) y tráfico entre zonas | Gateway endpoints de S3 y DynamoDB, que son gratis | ≈ 80 |
+| Observabilidad | **CloudWatch** | 30 GB de logs a 0,50 USD/GB, unas 30 métricas y 20 alarmas | ≈ 25 |
+| Seguridad | **KMS** (1 USD por llave al mes) y **Secrets Manager** (0,40 USD por secreto) | 4 llaves y 5 secretos | ≈ 10 |
+| **Total** | | | **≈ 2.550** |
+
+- **Dónde se va la plata:** el 83 % en EMR del streaming (35 %), MSK (19 %), Atlas (15 %) y MWAA (14 %). S3, DynamoDB, SNS, SQS y Athena juntos no llegan a 100 USD: lo caro es lo que corre 24/7 con alta disponibilidad, no los datos.
+- **Cómo bajarlo sin cambiar el diseño:** un Savings Plan de un año para los nodos de EMR (30 a 40 % menos en la parte de EC2), instancias Graviton en EMR y MSK (alrededor de 20 % menos) y mover la validación del Job 2 a expresiones de Spark, con lo que 2 nodos probablemente alcanzan. Con las tres, unos 1.800 a 1.900 USD al mes.
+- **Supuestos que pueden mover el número:** con decenas de millones de cuentas reales, el estado de MongoDB probablemente no cabe en 8 GB de RAM, y Atlas M40 suma unos 360 USD al mes. Si los analistas consultan mucho más que el tablero, Athena crece en proporción. La tarifa de EMR y el precio de Atlas salen de fuentes no oficiales: hay que confirmarlos en la calculadora de AWS y en la página de MongoDB.
+
+Precios consultados el 11 de noviembre de 2026: [MSK](https://aws.amazon.com/msk/pricing/), [MWAA](https://www.aws.amazon.com/managed-workflows-for-apache-airflow/pricing/), [EMR y EMR Serverless](https://aws.amazon.com/emr/pricing/), [tarifa de EMR por instancia](https://wring.co/blog/aws-emr-pricing-guide), [r5.large](https://calculator.holori.com/aws/ec2/r5.large/us-east-1), [r5.xlarge](https://instances.vantage.sh/aws/ec2/r5.xlarge), [m5.xlarge](https://instances.vantage.sh/aws/ec2/m5.xlarge), [MongoDB Atlas](https://managed-db-pricing.pages.dev/db/mongodb-atlas/), [Fargate](https://aws.amazon.com/fargate/pricing/), [RDS db.t4g.small](https://calculator.holori.com/aws/rds/db.t4g.small), [ALB](https://aws.amazon.com/elasticloadbalancing/classicloadbalancer/pricing), [NAT Gateway](https://cloudburn.io/blog/aws-nat-gateway-pricing), [CloudWatch](https://aws.amazon.com/cloudwatch/pricing/), [Secrets Manager y KMS](https://cloudburn.io/blog/aws-secrets-manager-pricing), [EBS](https://cloudburn.io/blog/amazon-ebs-pricing), [S3](https://cloudburn.io/blog/amazon-s3-pricing), [DynamoDB](https://aws.amazon.com/about-aws/whats-new/2024/11/amazon-dynamo-db-reduces-prices-on-demand-throughput-global-tables), [SNS y SQS](https://cloudburn.io/blog/amazon-sqs-pricing), [Athena](https://cloudburn.io/blog/amazon-athena-pricing), [IPv4 pública](https://aws.amazon.com/blogs/aws/new-aws-public-ipv4-address-charge-public-ip-insights).
 
 **¿Qué pasa cuando se acaba la sesión del laboratorio?** La instancia se detiene y el disco se conserva. Al prenderla, `docker compose up -d` levanta los contenedores; los jobs siguen desde sus checkpoints, y lo que está en S3, DynamoDB, SNS y SQS no se toca. Lo único que cambia es la IP pública.
 
@@ -155,7 +190,7 @@ Todo sale del presupuesto del laboratorio, y la instancia se detiene cuando no s
 
 No hay CloudWatch: sería el siguiente paso, con el driver `awslogs` de Docker para los logs.
 
-**¿Por qué el PR-AUC en la EC2 sale distinto en la sexta cifra decimal?** NumPy elige al importar la implementación de `log1p` en float32 según la CPU. La EC2 tiene AVX-512 y usa la versión vectorizada, que difiere en hasta 2 ULP en cerca del 3 % de las filas de algunas variables. El score cambia menos de 1e-6 y las decisiones no cambian: las mismas alertas que el notebook. Está documentado en `src/breb/features/motor.py:28-32`.
+**¿Por qué el PR-AUC en la EC2 sale distinto en la sexta cifra decimal?** NumPy elige al importar la implementación de `log1p` en float32 según la CPU. La EC2 tiene AVX-512 y usa la versión vectorizada, que difiere en hasta 2 ULP en cerca del 3 % de las filas de algunas variables. El score cambia menos de 1e-6 y las decisiones no cambian: las mismas 264 alertas del test que el notebook (diapositiva 11). Está documentado en `src/breb/features/motor.py:28-32`.
 
 ### Ingesta y Kafka
 **¿Por qué RNF-01 sale "parcial"?** El objetivo es 1.000 ev/s nominales. En AWS probamos a 20 ev/s, sin errores y con un p99 de 23 ms hacia Kafka, porque con 2 vCPU los jobs no procesan más rápido que eso. El productor no es el límite. Probar la tasa nominal es el punto 3 de "qué cambiaríamos".
